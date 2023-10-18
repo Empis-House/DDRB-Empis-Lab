@@ -1,0 +1,24 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Oct 12 12:31:17 2023
+
+@author: PC
+"""
+
+{
+    "tiles" : {
+        "X" : ["solid","ground"],
+        "S" : ["solid","breakable"],
+        "-" : ["passable","empty"],
+        "?" : ["solid","question block", "full question block"],
+        "Q" : ["solid","question block", "empty question block"],
+        "E" : ["enemy","damaging","hazard","moving"],
+        "<" : ["solid","top-left pipe","pipe"],
+        ">" : ["solid","top-right pipe","pipe"],
+        "[" : ["solid","left pipe","pipe"],
+        "]" : ["solid","right pipe","pipe"],
+        "o" : ["coin","collectable","passable"],
+        "B" : ["Cannon top","cannon","solid","hazard"],
+        "b" : ["Cannon bottom","cannon","solid"]
+    }
+}
