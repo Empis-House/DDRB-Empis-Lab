@@ -5,7 +5,7 @@ Created on Mon Sep 18 11:00:20 2023
 @author: PC
 """
 import sys
-sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB")
+sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
 
 import Grammar_Notation as gn
 import Word_Stitching as ws
@@ -64,7 +64,7 @@ P_2 = 0
 Level_3 = Level
 P_3 = 0
 
-for i in range(120):
+for i in range(250):
     pre_Level = G.N_Level_Generator(Level_Len).__repr__()
     while not(ws.Jumping_Fiasible_Word(pre_Level)):
         """Check List
@@ -75,20 +75,19 @@ for i in range(120):
     if pe.Performance(pre_Level) > P:
         P = pe.Performance(pre_Level)
         Level = pre_Level
-        delta_time = time.time() - base_time
-        print(i, P, "--", P_2, P_3, "t", delta_time)
         
     if pe.Performance(pre_Level)*Landings_Score(pre_Level) > P_2:
         P_2 = pe.Performance(pre_Level)*Landings_Score(pre_Level)
         Level_2 = pre_Level
-        delta_time = time.time() - base_time
-        print(i, P, "--", P_2, P_3, "t", delta_time)
         
     if Landings_Score(pre_Level) > P_3:
         P_3 = Landings_Score(pre_Level)
         Level_3 = pre_Level
+        
+    if i%50 == 0:
         delta_time = time.time() - base_time
         print(i, P, "--", P_2, P_3, "t", delta_time)
+    
 
 delta_time = time.time() - base_time
 print(i, P, "--", P_2, P_3, "t", delta_time)

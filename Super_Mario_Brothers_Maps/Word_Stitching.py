@@ -6,7 +6,7 @@ Created on Sat Sep 23 10:00:26 2023
 
 """
 import sys
-sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB")
+sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
 import pandas as pd
 
 

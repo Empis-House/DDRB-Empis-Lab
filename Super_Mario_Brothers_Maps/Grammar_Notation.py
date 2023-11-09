@@ -5,13 +5,17 @@ Created on Fri Sep 15 16:12:50 2023
 @author: PC
 """
 
-import pandas as pd
+# Adjascency List representation in Python
 import random
+from numba import jit, cuda
+import numpy as np
 
 class Word:
+    all = []
     
     def __init__(self, Sequence):
         self.__Sequence = Sequence
+        Word.all = Word.all + [self]
         
     def OpenKey(self):
         return self.__Sequence[0]
@@ -27,6 +31,49 @@ class Word:
     
     def __len__(self):
         return len(self.__Sequence)
+
+
+class Graph:
+    def __init__(self, ExampleLevel, WordsList = []):
+        self.Sequence = list(ExampleLevel)
+        self.V = list(set(ExampleLevel))
+        temp = np.empty((len(self.V),0))
+        self.E = [list(x) for x in temp]
+        del(temp)
+        
+        
+        last_letter = Word(self.Sequence[0])
+        Starter=True
+        for letter in self.Sequence:
+            letter=Word(letter)
+            add_letter = True
+            if Starter:
+                Starter=False
+            else: 
+                for l in self.E[self.V.index(last_letter.__repr__())]:
+                    if l.__repr__() == letter.__repr__():
+                        add_letter = False
+                        
+                if add_letter:
+                    self.E[self.V.index(last_letter.__repr__())] = self.E[self.V.index(last_letter.__repr__())]+[letter]
+            
+            last_letter=Word(letter)
+            
+        self.E = [list(set(x)) for x in self.E]
+        
+        for word in WordsList:
+            word=Word(word)
+            self.E[self.V.index(word.OpenKey())] = self.E[self.V.index(word.OpenKey())]+[word]
+
+    # Print the graph
+    def print_agraph(self):
+        for i in self.V:
+            print("Vertex " + i + ":", end="")
+            print(self.E[self.V.index(i)])
+            
+    def Vertixes_of(self, v):
+        return self.E[self.V.index(v)]
+
     
 class Grammar:
     
@@ -41,25 +88,8 @@ class Grammar:
         """
         
         self.__ExampleLevel = ExampleLevel 
-        
-        self.__WordsList = WordsList + list(ExampleLevel)   
-        
-        self.__Keys_Matrix = pd.DataFrame() #this Keys_Matrix resume all and only transition between keys 
-        LettersSet = sorted(list(set(self.__ExampleLevel)))
-        self.__Keys_Matrix["from"] = LettersSet
-        
-        last_letter = ''
-        
-        for letter in ExampleLevel:
-            if not(letter in self.__Keys_Matrix.columns):
-                self.__Keys_Matrix[letter] = [0]*len(LettersSet)
-                
-            if last_letter != '':
-                x = self.__Keys_Matrix.index[self.__Keys_Matrix["from"] == last_letter].tolist()[0]
-                y = self.__Keys_Matrix.columns.get_loc(letter)
-                self.__Keys_Matrix.iloc[x,y] = 1
-            
-            last_letter = letter
+        self.__WordsList = WordsList
+        self.__Graph = Graph(self.__ExampleLevel, self.__WordsList)
             
         Grammar.all = Grammar.all + [self]
             
@@ -68,6 +98,7 @@ class Grammar:
     
     def Add_Word(self, word):
         self.__WordsList = self.__WordsList + [word]
+        self.__Graph = Graph(self.__ExampleLevel, self.WordsList)
         
     def Words_List(self):
         print(self.__WordsList)
@@ -122,14 +153,14 @@ class Grammar:
                 Reducted_Blacklist = Reducted_Blacklist + [forbidden_word]
                 
         return Reducted_Blacklist
-
+    
     def N_Level_Generator(self, N, Start = '', seed = None):
 
         random.seed(seed)
         
         if  Start == '':
-            n = int(len(self.__WordsList)* random.random())
-            New_Level = Word(self.__WordsList[n])
+            n = int(len(self.__Graph.V)*random.random())
+            New_Level = Word(self.__Graph.V[n])
         elif Start in self.__WordsList:
             New_Level = Word(Start)
         else:
@@ -137,20 +168,10 @@ class Grammar:
             return
         
         while len(New_Level)<N:
-            
-            options = list()
-            
-            for word in self.__WordsList:
-                word = Word(word)
-                
-                x = self.__Keys_Matrix.index[self.__Keys_Matrix["from"] == New_Level.CloseKey()].tolist()[0]
-                y = self.__Keys_Matrix.columns.get_loc(word.OpenKey())
-                
-                if self.__Keys_Matrix.iloc[x,y] > 0:
-                    options = options + [word]
-            
-            n = int(len(options)* random.random())
-            New_Level = New_Level + options[n]
+            n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
+            New_Level = New_Level + self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
             
         return New_Level
     
+G = Grammar("ABCADBCADFEAGD")
+print(G.N_Level_Generator(20))
