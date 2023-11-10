@@ -7,8 +7,9 @@ Created on Fri Sep 15 16:12:50 2023
 
 # Adjascency List representation in Python
 import random
-from numba import jit, cuda
 import numpy as np
+
+
 
 class Word:
     all = []
@@ -22,6 +23,18 @@ class Word:
     
     def CloseKey(self):
         return self.__Sequence[-1]
+    
+    def Tail_Condition(self,n=3):
+        
+        if len(self.__Sequence)<n:
+            return True
+        
+        List = list(self.__Sequence[-n:])
+        
+        if(List[0]==List[1])and(List[2]==List[1]):
+            return False
+        else:
+            return True
     
     def __repr__(self):
         return f"{self.__Sequence}"
@@ -168,10 +181,16 @@ class Grammar:
             return
         
         while len(New_Level)<N:
-            n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
-            New_Level = New_Level + self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
-            
+            if New_Level.Tail_Condition():
+                n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
+                new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
+            else:
+                n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
+                new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
+                while new_Word.OpenKey() == New_Level.CloseKey():
+                    n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
+                    new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
+                    
+            New_Level = New_Level + new_Word
+                
         return New_Level
-    
-G = Grammar("ABCADBCADFEAGD")
-print(G.N_Level_Generator(20))

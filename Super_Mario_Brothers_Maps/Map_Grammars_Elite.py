@@ -20,7 +20,7 @@ Level_Len = 20
 
 level_str = "AABABBCDAEAEABABAABAAWSXMYZAAFFAAETEAAETEAASABASAAEETTEAETTEAAHIAAKLAAESEMEZE[[AAWAA"
 
-df = pd.read_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Structures_{}_1.txt'.format(example_code), delimiter=',')
+df = pd.read_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps\Structures_{}_1.txt'.format(example_code), delimiter=',')
 
 def Display_Level(Level, level_name=None, df = df):
     
@@ -58,41 +58,48 @@ def Landings_Score(Level, z_count = False):
 G = gn.Grammar(level_str)
 Level = G.N_Level_Generator(Level_Len).__repr__()
 P = 0
-base_time = time.time()
 Level_2 = Level
 P_2 = 0
 Level_3 = Level
 P_3 = 0
 
-for i in range(250):
-    pre_Level = G.N_Level_Generator(Level_Len).__repr__()
-    while not(ws.Jumping_Fiasible_Word(pre_Level)):
-        """Check List
-        Surrugate FI-2Pop Search"""
+for j in range(3):
+    print("Start",j)
+    base_time = time.time()
+    t=0
+    T=0
+    P = 0
+    P_2 = 0
+    P_3 = 0
+    for i in range(301):
         pre_Level = G.N_Level_Generator(Level_Len).__repr__()
-    
-    
-    if pe.Performance(pre_Level) > P:
-        P = pe.Performance(pre_Level)
-        Level = pre_Level
+        T+=1
+        while not(ws.Jumping_Fiasible_Word(pre_Level)):
+            """Check List
+            Surrugate FI-2Pop Search"""
+            
+            T+=1
+            pre_Level = G.N_Level_Generator(Level_Len).__repr__()
         
-    if pe.Performance(pre_Level)*Landings_Score(pre_Level) > P_2:
-        P_2 = pe.Performance(pre_Level)*Landings_Score(pre_Level)
-        Level_2 = pre_Level
+        t+=1
+        if pe.Performance(pre_Level) > P:
+            P = pe.Performance(pre_Level)
+            Level = pre_Level
+            
+        if pe.Performance(pre_Level)*Landings_Score(pre_Level) > P_2:
+            P_2 = pe.Performance(pre_Level)*Landings_Score(pre_Level)
+            Level_2 = pre_Level
+            
+        if Landings_Score(pre_Level) > P_3:
+            P_3 = Landings_Score(pre_Level)
+            Level_3 = pre_Level
+            
+        if i%100 == 0:
+            delta_time = time.time() - base_time
+            print(i, "t", "%.2f" % (delta_time/60), "--", "%.2f" % P, "%.2f" % P_2, "%.2f" % P_3, "--", "%.2f" % (t/T*100),"%")
         
-    if Landings_Score(pre_Level) > P_3:
-        P_3 = Landings_Score(pre_Level)
-        Level_3 = pre_Level
-        
-    if i%50 == 0:
-        delta_time = time.time() - base_time
-        print(i, P, "--", P_2, P_3, "t", delta_time)
     
-
-delta_time = time.time() - base_time
-print(i, P, "--", P_2, P_3, "t", delta_time)
-
-Display_Level(Level)
-Display_Level(Level_2)
-Display_Level(Level_3)
+    Display_Level(Level)
+    Display_Level(Level_2)
+    Display_Level(Level_3)
 
