@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 Created on Mon Oct  9 10:10:49 2023
-
-@author: PC
+Check List:
+    *Extract Example Levels strings
+    *Hazards and Rewards Search
+    *Hazards and Rewards _Score implementation in Performance_Evaluation
+    *Reward decoupling
+@author: Juan J. Rueda M.
 """
 
 import sys

@@ -1,8 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 Created on Fri Sep 15 16:12:50 2023
-
-@author: PC
+Check List: 
+    *verify First type of CAG
+    *Time testing
+    *O review
+    *Reduced_Blacklist: not implemented case, Long word (redundance)  
+@author: Juan J. Rueda M.
 """
 
 # Adjascency List representation in Python
@@ -93,12 +97,6 @@ class Grammar:
     all = []
     
     def __init__(self, ExampleLevel, WordsList = []): 
-        """Check List: 
-        verify First type of CAG
-        Time testing
-        O review
-        Reduced_Blacklist: not implemented case, Long word (redundance)  
-        """
         
         self.__ExampleLevel = ExampleLevel 
         self.__WordsList = WordsList
