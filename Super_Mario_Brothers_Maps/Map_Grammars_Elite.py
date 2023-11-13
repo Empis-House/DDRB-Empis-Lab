@@ -2,10 +2,8 @@
 """
 Created on Mon Sep 18 11:00:20 2023
 Check List:
-    *Map_Elites Reports and Dispaly
     *More Functions
     *Mapping Functions frome Grids
-    *Surrugate FI-2Pop Search
 @author: Juan J. Rueda M.
 """
 """"""
@@ -28,6 +26,24 @@ level_str = "AABABBCDAEAEABABAABAAWSXMYZAAFFAAETEAAETEAASABASAAEETTEAETTEAAHIAAK
 
 df = pd.read_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps\Structures_{}_1.txt'.format(example_code), delimiter=',')
 
+def Display_Level(Level, level_name=None, df = df):
+    
+    print("\n",pe.Performance(Level))
+    print(Landings_Score(Level))
+    print(ws.Jumping_Fiasible_Word(Level))
+            
+    Display = pd.DataFrame(columns= ["{}".format(i) for i in range(14)])
+    for Key in list(Level):
+        new_row = list(list(df.loc[df["Key"] == Key,"Structures" ])[0])
+        Display.loc[len(Display)] = new_row
+        
+        
+    Display = Display.transpose()
+    if level_name != None:
+        Display.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\{}.txt'.format(level_name), index=False,header=False)
+    
+    print(Display)
+
 class Map_Elite:
     all = []
     
@@ -48,11 +64,21 @@ class Map_Elite:
                 self.__Opt_Values[i] = y
                 self.__Optimal_strings[i] = Level
     
-    def Display_Range():
+    def Display_Range(self, a, b):
+        if (a>b) or (b>self.__N) or (a*b<0):
+            print("Display_Range Invalid index")
+            return
+        for i in range(a,b+1):
+            Display_Level(self.__Optimal_strings[i])
         return
     
-    def Report(Type = "Values"):
-        return
+    def Report(self, Type = "Values"):
+        if Type == "Values":
+            return self.__Opt_Values
+        if Type == "Strings":
+            return self.__Optimal_strings
+        else:
+            return
     
     def __repr__(self):
         return [self.__Optimal_strings,self.__Opt_Values]
@@ -60,23 +86,7 @@ class Map_Elite:
     def __len__(self):
         return self.__N
 
-def Display_Level(Level, level_name=None, df = df):
-    
-    print("\n",pe.Performance(Level))
-    print(Landings_Score(Level))
-    print(ws.Jumping_Fiasible_Word(Level))
-            
-    Display = pd.DataFrame(columns= ["{}".format(i) for i in range(14)])
-    for Key in list(Level):
-        new_row = list(list(df.loc[df["Key"] == Key,"Structures" ])[0])
-        Display.loc[len(Display)] = new_row
-        
-        
-    Display = Display.transpose()
-    if level_name != None:
-        Display.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\{}.txt'.format(level_name), index=False,header=False)
-    
-    print(Display)
+
 
 # Variety Dominess
 def Landings_Score(Level):
@@ -91,6 +101,9 @@ def Landings_Score(Level):
         
     return Count/(Max * len(Level))
 
+
+# map-elites
+
 Map_Landings_Score = Map_Elite(Landings_Score,alphas=[0,0.5,1])
 Map_Performance= Map_Elite(pe.Performance,alphas=[0,0.1,0.5])
 
@@ -101,16 +114,16 @@ while not(ws.Jumping_Fiasible_Word(Level)):
 Map_Landings_Score.Quest(Level)
 Map_Performance.Quest(Level)
 
-for j in range(2):
+for j in range(1):
     print("Start",j)
+    print("XX", "t", "Time", "--", "Performance", "--","--","--","--" "Landings_Score", "--","--","--","--", "Fiasible_Word %")
     base_time = time.time()
     t=0
     T=0
-    for i in range(50):
+    for i in range(10000):
         pre_Level = G.N_Level_Generator(Level_Len).__repr__()
         T+=1
         while not(ws.Jumping_Fiasible_Word(pre_Level)):
-            
             T+=1
             pre_Level = G.N_Level_Generator(Level_Len).__repr__()
         
@@ -119,11 +132,10 @@ for j in range(2):
         Map_Performance.Quest(pre_Level)
         
             
-        if i%10 == 0:
+        if i%100 == 0:
             delta_time = time.time() - base_time
-            print(i, "t", "%.2f" % (delta_time/60), "--", "%.2f" % Map_Performance.__repr__()[1][0], "%.2f" % Map_Performance.__repr__()[1][1], "%.2f" % Map_Performance.__repr__()[1][2], "--", "%.2f" % (t/T*100),"%")
+            print(i, "t", "%.2f" % (delta_time/60), "--", Map_Performance.Report(), "--","--", Map_Landings_Score.Report(), "--", "%.2f" % (t/T*100),"%")
         
-    Display_Level(Map_Performance.__repr__()[0][0])
-    Display_Level(Map_Performance.__repr__()[0][1])
-    Display_Level(Map_Performance.__repr__()[0][2])
+    Map_Performance.Display_Range(0,2)
+    Map_Landings_Score.Display_Range(0,2)
 

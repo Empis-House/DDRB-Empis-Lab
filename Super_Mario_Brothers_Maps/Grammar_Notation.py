@@ -2,6 +2,7 @@
 """
 Created on Fri Sep 15 16:12:50 2023
 Check List: 
+    *Perceptron (max Fiasible_Word %) Surrugate FI-2Pop Search
     *verify First type of CAG
     *Time testing
     *O review
@@ -20,7 +21,7 @@ class Word:
     
     def __init__(self, Sequence):
         self.__Sequence = Sequence
-        Word.all = Word.all + [self]
+        #Word.all = Word.all + [self]
         
     def OpenKey(self):
         return self.__Sequence[0]
