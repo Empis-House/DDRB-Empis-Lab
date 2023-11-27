@@ -11,7 +11,7 @@ import random
 class Word:
     
     def __init__(self, Sequence):
-        self.__Sequence = Sequence
+        self.__Sequence = Sequence #doble __. Revisar PEP8
         
     def OpenKey(self):
         return self.__Sequence[0]
@@ -44,13 +44,13 @@ class Grammar:
         
         self.__WordsList = WordsList + list(ExampleLevel)   
         
-        self.__Keys_Matrix = pd.DataFrame() #this Keys_Matrix resume all and only transition between keys 
+        self.__Keys_Matrix = pd.DataFrame() #this Keys_Matrix resume all and only transition between keys #Creo que puede ser un array de numpy y ya
         LettersSet = sorted(list(set(self.__ExampleLevel)))
         self.__Keys_Matrix["from"] = LettersSet
         
         last_letter = ''
         
-        for letter in ExampleLevel:
+        for letter in ExampleLevel: #Todo esto debería ser una función
             if not(letter in self.__Keys_Matrix.columns):
                 self.__Keys_Matrix[letter] = [0]*len(LettersSet)
                 
@@ -74,7 +74,7 @@ class Grammar:
     
     def Simple_words(self):
         
-        All_Keys = list(self.__ExampleLevel)
+        All_Keys = list(self.__ExampleLevel) #no debería ser WordsList? Y ya de po0r si es una lista
         Simple_Words = set()
         
         for key in All_Keys:
