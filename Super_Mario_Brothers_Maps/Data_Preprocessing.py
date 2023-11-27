@@ -4,12 +4,13 @@ Created on Mon Oct  9 10:10:49 2023
 
 @author: PC
 """
+import os
+import pathlib
 
-import sys
-
-sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB")
 import pandas as pd
 import Grammar_Notation as gn
+
+os.chdir(pathlib.Path(__file__).parent.resolve())
 
 seed=1
 examples_codes = ["8-1","6-3"]
@@ -41,7 +42,7 @@ Original_Level_Strings = pd.DataFrame(columns=["Level name", "Word"]) # No imple
 
 for example_code in examples_codes:
     Temporal = pd.DataFrame(columns=["Structures","Key","Landings", "Colliders"] + ["{}".format(i) for i in range(13)])
-    with open(r"C:\Users\PC\Documents\GitHub\EMPIS LAB\Super_Mario_Brothers_Maps\Processed\mario-{}.txt".format(example_code)) as infile:
+    with open(f"Processed/mario-{example_code}.txt") as infile:
         i = 0
         for line in infile: 
             Temporal["{}".format(i)] = list(line.split()[0])
@@ -74,8 +75,8 @@ for Key in list(Level):
     Display.loc[len(Display)] = new_row
     
 Display = Display.transpose()
-Display.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\{}_{}.txt'.format("mix",seed), index=False,header=False)
+Display.to_csv(f'mix_{seed}.txt', index=False,header=False)
 print(Display) 
 
-Display.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\{}_{}.txt'.format("mix",seed), index=False,header=False)
-Keys_Structures.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Structures_{}_{}.txt'.format("mix",seed), index=False)
+Display.to_csv(f'mix_{seed}.txt', index=False,header=False)
+Keys_Structures.to_csv(f'Structures_mix_{seed}.txt', index=False)
