@@ -10,8 +10,12 @@ import Grammar_Notation as gn
 
 def Performance(level):
     if len(level)==0:
-        return
-    return list(level).count("E")/len(level)
+        return NotImplementedError()
+    Count=0
+    array = ["E","Q","T","d","i","k","v"]
+    for x in array:
+        Count = Count + list(level).count(x)
+    return Count/len(level)
 
 Levels_Performance = pd.DataFrame(columns=["Level_String","Added_Wordlist", "Performance"])
 

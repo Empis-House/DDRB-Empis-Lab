@@ -26,6 +26,7 @@ examples_codes = ["8-1","6-3"]
 Level_Len = 500
 
 def Structure(row):
+    
   return "".join(row[4:])
 
 def Landing_Search(row,lands_ID = {"X", "S", "<", ">", "[", "]"}): #Each mecaniques stitching must have a Fi-2pop evaluation
@@ -42,6 +43,7 @@ def Landing_Search(row,lands_ID = {"X", "S", "<", ">", "[", "]"}): #Each mecaniq
 def Colliders_Search (row,collider_ID = {"X", "S", "<", ">", "[", "]"}):
     boolean_colliders = "".join(row.apply(lambda x: "1" if x in collider_ID else "0"))
     return int(boolean_colliders,2)
+
 
 
 Keys_Structures = pd.DataFrame(columns=["Key", "Structures", "Landings", "Colliders"])
@@ -73,10 +75,11 @@ for index in Keys_Structures.index:
     Keys_Structures.loc[index,"Key"] = "{}".format(chr(65+index))
 
 print(Keys_Structures)
-    
+
+Keys_Structures.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Structures_{}_{}.txt'.format("mix",seed), index=False)
 
     
-G = gn.Grammar("AABABBCDAEAEABABAABAAWSXMYZAAFFAAETEAAETEAASABASAAEETTEAETTEAAHIAAKLAAESEMEZE[[AAWAA")
+"""G = gn.Grammar("AABABBCDAEAEABABAABAAWSXMYZAAFFAAETEAAETEAASABASAAEETTEAETTEAAHIAAKLAAESEMEZE[[AAWAA")
 Level = G.N_Level_Generator(Level_Len,seed = seed).__repr__()
 Display = pd.DataFrame(columns= ["{}".format(i) for i in range(14)])
 for Key in list(Level):
@@ -87,5 +90,4 @@ Display = Display.transpose()
 Display.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\{}_{}.txt'.format("mix",seed), index=False,header=False)
 print(Display) 
 
-Display.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\{}_{}.txt'.format("mix",seed), index=False,header=False)
-Keys_Structures.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Structures_{}_{}.txt'.format("mix",seed), index=False)
+Display.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\{}_{}.txt'.format("mix",seed), index=False,header=False)"""

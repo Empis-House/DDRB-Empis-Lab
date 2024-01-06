@@ -21,9 +21,6 @@ seed=10
 example_code = "mix"
 Level_Len = 20
 
-
-level_str = "AABABBCDAEAEABABAABAAWSXMYZAAFFAAETEAAETEAASABASAAEETTEAETTEAAHIAAKLAAESEMEZE[[AAWAA"
-
 df = pd.read_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps\Structures_{}_1.txt'.format(example_code), delimiter=',')
 
 def Display_Level(Level, level_name=None, df = df):
@@ -40,7 +37,7 @@ def Display_Level(Level, level_name=None, df = df):
         
     Display = Display.transpose()
     if level_name != None:
-        Display.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\{}.txt'.format(level_name), index=False,header=False)
+        Display.to_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\{}.txt'.format(level_name), index=False,header=False,sep=",")
     
     print(Display)
 
@@ -86,18 +83,54 @@ class Map_Elite:
     def __len__(self):
         return self.__N
 
+def Structure(row):
+  return "".join(row[2:])
+
+def Key_substraction(x, df=df):
+    "-------------X"
+    "---------XXXXX"
+    "--------------"
+    "-------XXXXXXX"
+    if len(df[df["Structures"] ==  x]["Key"])==0:
+        return "?"
+    else:
+        return np.array(df[df["Structures"] ==  x]["Key"])[0]
+
+def Extract_Level_String(examples_codes,df=df):
+    for example_code in examples_codes:
+        Temporal = pd.DataFrame(columns=["Structures","Key"] + ["{}".format(i) for i in range(13)])
+        with open(r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps\Processed\mario-{}.txt".format(example_code)) as infile:
+            i = 0
+            for line in infile: 
+                Temporal["{}".format(i)] = list(line.split()[0])
+                i+=1
+        Level = pd.DataFrame(columns=["Structures","Key"] + ["{}".format(i) for i in range(13)])
+        Level = pd.concat([Level,Temporal], axis=0)
+             
+    Level["Structures"] = Level.apply(Structure, axis=1)
+    
+    for i in range(len(Level["Structures"])):
+        Level["Key"][i]= Key_substraction(Level["Structures"][i])
+        
+    return "".join(Level["Key"])
+
 
 
 # Variety Dominess
 def Landings_Score(Level):
-            
+    if len(Level)==0:
+        print(Level)
+        return
     Count=0
-    Max = 0
+    Max = -1
     for Key in list(Level):
         value = list(df.loc[df["Key"] == Key,"Landings" ])[0]
         Count += value
         if value>Max:
             Max = value
+    if Max == 0:
+        print(Level)
+        return
         
     return Count/(Max * len(Level))
 
@@ -105,7 +138,9 @@ def Landings_Score(Level):
 # map-elites
 
 Map_Landings_Score = Map_Elite(Landings_Score,alphas=[0,0.5,1])
-Map_Performance= Map_Elite(pe.Performance,alphas=[0,0.1,0.5])
+Map_Performance= Map_Elite(pe.Performance,alphas=[0,0.1,0.25,0.5])
+
+level_str = Extract_Level_String(["6-3"])
 
 G = gn.Grammar(level_str)
 Level = G.N_Level_Generator(Level_Len).__repr__()
@@ -114,13 +149,14 @@ while not(ws.Jumping_Fiasible_Word(Level)):
 Map_Landings_Score.Quest(Level)
 Map_Performance.Quest(Level)
 
+
 for j in range(1):
     print("Start",j)
     print("XX", "t", "Time", "--", "Performance", "--","--","--","--" "Landings_Score", "--","--","--","--", "Fiasible_Word %")
     base_time = time.time()
     t=0
     T=0
-    for i in range(10000):
+    for i in range(500):
         pre_Level = G.N_Level_Generator(Level_Len).__repr__()
         T+=1
         while not(ws.Jumping_Fiasible_Word(pre_Level)):
@@ -135,7 +171,13 @@ for j in range(1):
         if i%100 == 0:
             delta_time = time.time() - base_time
             print(i, "t", "%.2f" % (delta_time/60), "--", Map_Performance.Report(), "--","--", Map_Landings_Score.Report(), "--", "%.2f" % (t/T*100),"%")
-        
-    Map_Performance.Display_Range(0,2)
+    delta_time = time.time() - base_time
+    print(i, "t", "%.2f" % (delta_time/60), "--", Map_Performance.Report(), "--","--", Map_Landings_Score.Report(), "--", "%.2f" % (t/T*100),"%")
+    Map_Performance.Display_Range(0,3)
     Map_Landings_Score.Display_Range(0,2)
+    
 
+Display_Level(Map_Performance.Report(Type = "Strings")[0],level_name="Performance_opt=0")
+Display_Level(Map_Performance.Report(Type = "Strings")[1],level_name="Performance_opt=0.1")  
+Display_Level(Map_Performance.Report(Type = "Strings")[2],level_name="Performance_opt=0.25")
+Display_Level(Map_Performance.Report(Type = "Strings")[3],level_name="Performance_opt=0.5")    

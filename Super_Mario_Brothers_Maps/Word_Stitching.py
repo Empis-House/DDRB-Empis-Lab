@@ -65,7 +65,11 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
     Initial = Int_Landings_List[0] #FIX
     
     if len(Level) == 0:
-        return                              
+        return False   
+    if Initial == 0:
+        return False 
+    if len(Level) == 1:
+        return True                    
     for n_letter in np.arange(n):
         Initial= Int_Landings_List[n_letter]
         R_Band_Height = np.arange(Band_Height)
