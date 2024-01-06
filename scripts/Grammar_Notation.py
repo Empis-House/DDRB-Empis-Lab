@@ -10,7 +10,7 @@ Check List:
 @author: Juan J. Rueda M.
 """
 import sys
-sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
+# sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
 import random
 import numpy as np
 import Word_Stitching as ws
@@ -45,7 +45,7 @@ class BasicNN(nn.Module):
         
         return x   """
     
-
+#defining word as a class and its components
 class Word:
     all = []
     
@@ -81,6 +81,7 @@ class Word:
         return len(self.__Sequence)
 
 
+#defining relations between words as an adjacency matrix
 class Graph:
     def __init__(self, ExampleLevel, WordsList = []):
         self.Sequence = list(ExampleLevel)
@@ -124,6 +125,10 @@ class Graph:
 
     def __len__(self):
         return len(self.V)
+    
+#Defining grammars
+#receives an exmaple level as a string and an optional list of pre made levels
+#pre made levels need to have same starting and final word the same as the example
 class Grammar:
     
     all = []
@@ -137,7 +142,7 @@ class Grammar:
         Grammar.all = Grammar.all + [self]
             
     def __repr__(self):
-        return f"{self.__Keys_Matrix}\n"
+        return f"{self.__Graph}\n"
     
     def Add_Word(self, word):
         self.__WordsList = self.__WordsList + [word]
@@ -146,21 +151,23 @@ class Grammar:
     def Words_List(self):
         print(self.__WordsList)
     
+    #gets all possible grammars of len 2
     def Simple_words(self):
         
         All_Keys = list(self.__ExampleLevel)
         Simple_Words = set()
         
         for key in All_Keys:
-            x = self.__Keys_Matrix.index[self.__Keys_Matrix["from"] == key].tolist()[0]                
+            x = self.__Graph.index[self.__Graph["from"] == key].tolist()[0]                
                 
             for k in  All_Keys:
-                y = self.__Keys_Matrix.columns.get_loc(k)
-                if self.__Keys_Matrix.iloc[x,y] == 1:
+                y = self.__Graph.columns.get_loc(k)
+                if self.__Graph.iloc[x,y] == 1:
                     Simple_Words = Simple_Words.union({key + k})
                             
-        return Simple_Words
+        return #Simple_Words ##not yet implemented
     
+    #receives a list of words and gives all the possible sublists
     def Reduced_Blacklist(self, BlackList = ["FVBREDPAWSG","EEE"]): 
         Reducted_Blacklist = []
         for forbidden_word in BlackList:
@@ -195,11 +202,13 @@ class Grammar:
             if len(In_Stack)+1 == len(Filter) :
                 Reducted_Blacklist = Reducted_Blacklist + [forbidden_word]
                 
-        return Reducted_Blacklist
+        return #Reducted_Blacklist ##not yet implemented
     
+    #Generates a level of size N from a given grammar
     def N_Level_Generator(self, N, Start = '', seed = None, module = 10):
 
         random.seed(seed)
+        #we don't talk about this part
         if False:
             New_Level = Word("")
             # N = n*module + k
@@ -230,32 +239,40 @@ class Grammar:
             return New_Level
             
             return New_Level
+        if N<= 0:
+            return
         
-        elif N>0:
-            Feasible_Level = False
-            while not(Feasible_Level):
-                if  Start == '':
-                    n = int(len(self.__Graph.V)*random.random())
-                    New_Level = Word(self.__Graph.V[n])
-                elif Start in self.__Graph.V:
-                    New_Level = Word(Start)
-                else:
-                    print("invalid start")
-                    return
-                while not(ws.Jumping_Fiasible_Word(New_Level.__repr__())):
-                    #print("no fiasible start")
-                    n = int(len(self.__Graph.V)*random.random())
-                    New_Level = Word(self.__Graph.V[n])
-                while len(New_Level)<N:
+        #starts with the level not being feasible
+        Feasible_Level = False
+        while not(Feasible_Level):
+            #if not given a premade start, select at random
+            if  Start == '':
+                n = int(len(self.__Graph.V)*random.random())
+                New_Level = Word(self.__Graph.V[n])
+            #check if start is in graph, else level can't be generated
+            elif Start in self.__Graph.V:
+                New_Level = Word(Start)
+            else:
+                print("invalid start")
+                return
+            while not(ws.Jumping_Fiasible_Word(New_Level.__repr__())):
+                #print("no fiasible start")
+                n = int(len(self.__Graph.V)*random.random())
+                New_Level = Word(self.__Graph.V[n])
+            #continue adding valid words to the final level until the end
+            #you need to observe the relations in the graph
+            while len(New_Level)<N:
+                n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
+                new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
+                while new_Word.OpenKey() == New_Level.CloseKey():
                     n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
                     new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
-                    while new_Word.OpenKey() == New_Level.CloseKey():
-                        n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
-                        new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
-                    New_Level = New_Level + new_Word
-                Feasible_Level = ws.Jumping_Fiasible_Word(New_Level.__repr__())
-            return New_Level
+                New_Level = New_Level + new_Word
+            Feasible_Level = ws.Jumping_Fiasible_Word(New_Level.__repr__())
+        return New_Level
 
+
+##TEst
 G = Grammar("AABABBCDAEAEABABAABAAWSXMYZAAFFAAETEAAETEAASABASAAEETTEAETTEAAHIAAKLAAESEMEZE[[AAWAA")
 Level = G.N_Level_Generator(20).__repr__()
 print(Level)
