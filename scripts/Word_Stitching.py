@@ -19,7 +19,7 @@ Max_Length = 4 #max length of player jump
 Band_Height = 14 #size of level
 
 #read structures
-df = pd.read_csv(r'Super_Mario_Brothers_Maps/structures/Structures_mix_1.txt'.format("mix",1))
+df = pd.read_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_mix_1.txt'.format("mix",1))
 
 #pass info to numpy
 Columns = df.columns.to_numpy()

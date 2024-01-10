@@ -20,8 +20,9 @@ import numpy as np
 seed=10
 example_code = "mix"
 Level_Len = 20
+module=10
 
-df = pd.read_csv(r'Super_Mario_Brothers_Maps/structures/Structures_{}_1.txt'.format(example_code), delimiter=',')
+df = pd.read_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_{}_1.txt'.format(example_code), delimiter=',')
 
 
 #display and save final level if name is included
@@ -39,7 +40,7 @@ def Display_Level(Level, level_name=None, df = df):
         
     Display = Display.transpose()
     if level_name != None:
-        Display.to_csv(r'Super_Mario_Brothers_Maps/final_levels/{}.txt'.format(level_name), index=False,header=False,sep=",")
+        Display.to_csv(r'../Super_Mario_Brothers_Maps/final_levels/{}.txt'.format(level_name), index=False,header=False,sep=",")
     
     print(Display)
 
@@ -103,7 +104,7 @@ def Key_substraction(x, df=df):
 def Extract_Level_String(examples_codes,df=df):
     for example_code in examples_codes:
         Temporal = pd.DataFrame(columns=["Structures","Key"] + ["{}".format(i) for i in range(13)])
-        with open(r"Super_Mario_Brothers_Maps/Processed/mario-{}.txt".format(example_code)) as infile:
+        with open(r"../Super_Mario_Brothers_Maps/Processed/mario-{}.txt".format(example_code)) as infile:
             i = 0
             for line in infile: 
                 Temporal["{}".format(i)] = list(line.split()[0])
@@ -147,9 +148,9 @@ Map_Performance= Map_Elite(pe.Performance,alphas=[0,0.1,0.25,0.5])
 level_str = Extract_Level_String(["6-3"])
 
 G = gn.Grammar(level_str)
-Level = G.N_Level_Generator(Level_Len).__repr__()
+Level = G.N_Level_Generator(Level_Len,module=module).__repr__()
 while not(ws.Jumping_Fiasible_Word(Level)):
-    Level = G.N_Level_Generator(Level_Len).__repr__()
+    Level = G.N_Level_Generator(Level_Len,module=module).__repr__()
 Map_Landings_Score.Quest(Level)
 Map_Performance.Quest(Level)
 
@@ -161,11 +162,11 @@ for j in range(1):
     t=0
     T=0
     for i in range(500):
-        pre_Level = G.N_Level_Generator(Level_Len).__repr__()
+        pre_Level = G.N_Level_Generator(Level_Len,module=module).__repr__()
         T+=1
         while not(ws.Jumping_Fiasible_Word(pre_Level)):
             T+=1
-            pre_Level = G.N_Level_Generator(Level_Len).__repr__()
+            pre_Level = G.N_Level_Generator(Level_Len,module=module).__repr__()
         
         t+=1
         Map_Landings_Score.Quest(pre_Level)

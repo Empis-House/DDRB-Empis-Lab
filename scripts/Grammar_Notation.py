@@ -206,70 +206,47 @@ class Grammar:
     
     #Generates a level of size N from a given grammar
     def N_Level_Generator(self, N, Start = '', seed = None, module = 10):
-
+        New_Level = Word("")
         random.seed(seed)
         #we don't talk about this part
-        if False:
-            New_Level = Word("")
-            # N = n*module + k
-            k = N%module     
-            m = int(N/module)
-            
-            Feasible_Level = False
-            
-            if  Start == '':
-                n = int(len(self.__Graph.V)*random.random())
-                New_Level = Word(self.__Graph.V[n])
-            elif Start in self.__Graph.V:
-                New_Level = Word(Start)
-            else:
-                print("invalid start")
-                return
-            while not(ws.Jumping_Fiasible_Word(New_Level.__repr__())):
-                #print("no fiasible start")
-                n = int(len(self.__Graph.V)*random.random())
-                New_Level = Word(self.__Graph.V[n])
-            for i in range(m):
-                n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
-                new_Start = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
-                new_Word = self.N_Level_Generator(module,Start = new_Start)
-                New_Level = New_Level + new_Word
-            Feasible_Level = ws.Jumping_Fiasible_Word(module,New_Level.__repr__())
-                
-            return New_Level
-            
-            return New_Level
         if N<= 0:
-            return
-        
-        #starts with the level not being feasible
-        Feasible_Level = False
-        while not(Feasible_Level):
-            #if not given a premade start, select at random
-            if  Start == '':
-                n = int(len(self.__Graph.V)*random.random())
-                New_Level = Word(self.__Graph.V[n])
-            #check if start is in graph, else level can't be generated
-            elif Start in self.__Graph.V:
-                New_Level = Word(Start)
-            else:
-                print("invalid start")
-                return
-            while not(ws.Jumping_Fiasible_Word(New_Level.__repr__())):
-                #print("no fiasible start")
-                n = int(len(self.__Graph.V)*random.random())
-                New_Level = Word(self.__Graph.V[n])
-            #continue adding valid words to the final level until the end
-            #you need to observe the relations in the graph
-            while len(New_Level)<N:
-                n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
-                new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
-                while new_Word.OpenKey() == New_Level.CloseKey():
+            return Word("")
+        if N<=module:
+            #starts with the level not being feasible
+            Feasible_Level = False
+            while not(Feasible_Level):
+                #if not given a premade start, select at random
+                if  Start == '':
+                    n = int(len(self.__Graph.V)*random.random())
+                    New_Level = Word(self.__Graph.V[n])
+                #check if start is in graph, else level can't be generated
+                elif Start in self.__Graph.V:
+                    New_Level = Word(Start)
+                else:
+                    print("invalid start")
+                    return
+                while not(ws.Jumping_Fiasible_Word(New_Level.__repr__())):
+                    #print("no fiasible start")
+                    n = int(len(self.__Graph.V)*random.random())
+                    New_Level = Word(self.__Graph.V[n])
+                #continue adding valid words to the final level until the end
+                #you need to observe the relations in the graph
+                while len(New_Level)<N:
                     n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
                     new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
-                New_Level = New_Level + new_Word
-            Feasible_Level = ws.Jumping_Fiasible_Word(New_Level.__repr__())
-        return New_Level
+                    while new_Word.OpenKey() == New_Level.CloseKey():
+                        n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
+                        new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
+                    New_Level = New_Level + new_Word
+                Feasible_Level = ws.Jumping_Fiasible_Word(New_Level.__repr__())
+            return New_Level
+        else:
+            for i in range(N//module):
+                New_Level = New_Level + self.N_Level_Generator(module,Start=New_Level.CloseKey())
+            New_Level = New_Level + self.N_Level_Generator(N%module,Start=New_Level.CloseKey())
+            return New_Level
+                
+            
 
 
 ##TEst
