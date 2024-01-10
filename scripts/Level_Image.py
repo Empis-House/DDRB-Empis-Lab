@@ -79,22 +79,22 @@ mario_tiles = {
     }
 }
 
-csv_file_path = r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Performance_opt=0.txt'
-output_image_path = r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Performance_opt=0.png'
+csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.txt'
+output_image_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.png'
 
 create_mario_level(csv_file_path, output_image_path)
 
-csv_file_path = r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Performance_opt=0.5.txt'
-output_image_path = r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Performance_opt=0.5.png'
+csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.5.txt'
+output_image_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.5.png'
 
 create_mario_level(csv_file_path, output_image_path)
 
-csv_file_path = r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Performance_opt=0.1.txt'
-output_image_path = r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Performance_opt=0.1.png'
+csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.1.txt'
+output_image_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.1.png'
 
 create_mario_level(csv_file_path, output_image_path)
 
-csv_file_path = r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Performance_opt=0.25.txt'
-output_image_path = r'C:\Users\PC\Documents\GitHub\EMPIS LAB\Performance_opt=0.25.png'
+csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.25.txt'
+output_image_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.25.png'
 
 create_mario_level(csv_file_path, output_image_path)

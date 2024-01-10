@@ -9,7 +9,7 @@ Check List:
     *Reduced_Blacklist: not implemented case, Long word (redundance)  
 @author: Juan J. Rueda M.
 """
-import sys
+#import sys
 # sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
 import random
 import numpy as np
@@ -54,10 +54,16 @@ class Word:
         #Word.all = Word.all + [self]
         
     def OpenKey(self):
-        return self.__Sequence[0]
+        if self.__Sequence:
+            return self.__Sequence[0]
+        else:
+            return ""
     
     def CloseKey(self):
-        return self.__Sequence[-1]
+        if self.__Sequence:
+            return self.__Sequence[-1]
+        else:
+            return ""
     
     def Tail_Condition(self,n=3):
         
@@ -242,8 +248,8 @@ class Grammar:
             return New_Level
         else:
             for i in range(N//module):
-                New_Level = New_Level + self.N_Level_Generator(module,Start=New_Level.CloseKey())
-            New_Level = New_Level + self.N_Level_Generator(N%module,Start=New_Level.CloseKey())
+                New_Level = New_Level + self.N_Level_Generator(module)
+            New_Level = New_Level + self.N_Level_Generator(N%module)
             return New_Level
                 
             
