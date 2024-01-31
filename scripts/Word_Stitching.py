@@ -64,7 +64,6 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
     Int_Landings_List = [Landings[x] for x in Structures_id]
     Int_Colliders_List = [Colliders[x] for x in Structures_id]
     
-    Jump_Walk_Stitched = True
     All_Landings_Accesibility_Stitched = True
     n = len(Level)
     Initial = Int_Landings_List[0] #FIX
@@ -80,11 +79,11 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
         R_Band_Height = np.arange(Band_Height)
         
         #check if the horizontal jump is possible
-        #Horizontal_Range = [*range(n_letter +1, min(n_letter + Max_Length+1, n)),*range(max(n_letter - Max_Length, 0), n_letter-1 )]
-        Horizontal_Range = np.arange(n_letter +1, min(n_letter + Max_Length+1, n))
+        #Forward_Stitching = [*range(n_letter +1, min(n_letter + Max_Length+1, n)),*range(max(n_letter - Max_Length, 0), n_letter-1 )]
+        Forward_Stitching = np.arange(n_letter +1, min(n_letter + Max_Length+1, n))
         Back_Stiching = np.arange(max(n_letter - Max_Length, 0), n_letter)
         
-        #Stitches = GPU_Stitching(Level, Horizontal_Range,Back_Stiching, R_Band_Height, Initial, n_letter)
+        #Stitches = GPU_Stitching(Level, Forward_Stitching,Back_Stiching, R_Band_Height, Initial, n_letter)
         
         Path_Blocked = False
         #check forward for landings
@@ -93,7 +92,7 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
                 LA_individually_Stitched_R = False
                 LA_individually_Stitched_L = False
                 JW_individually_Stitched = False
-                for j in Horizontal_Range:
+                for j in Forward_Stitching:
                     Int_Landing = Int_Landings_List[j]
                     Int_Collider = Int_Colliders_List[j]
                     
@@ -114,7 +113,7 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
                     if Range_Binary_Prop(Int_Landing,i-Max_Height,i)!= 0:
                             LA_individually_Stitched_R = True
                 
-                #check backwards for returning path                                   
+                #check if exist an alternative path                              
                 for j in Back_Stiching:
                         
                     Int_Landing =  Int_Landings_List[j]
@@ -142,14 +141,12 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
                     
         #Check if everything is true
         All_Landings_Accesibility_Stitched = All_Landings_Accesibility_Stitched and LA_individually_Stitched_L and LA_individually_Stitched_R
-        Jump_Walk_Stitched = Jump_Walk_Stitched and JW_individually_Stitched
-        if not(Jump_Walk_Stitched and All_Landings_Accesibility_Stitched):
-            return Jump_Walk_Stitched and All_Landings_Accesibility_Stitched
+        
+        if not(All_Landings_Accesibility_Stitched):
+            return All_Landings_Accesibility_Stitched
         
         
-        
-        Jump_Walk_Stitched = Jump_Walk_Stitched and JW_individually_Stitched
         
     
     # returns if the whole level is possible  
-    return  Jump_Walk_Stitched and All_Landings_Accesibility_Stitched             
+    return  All_Landings_Accesibility_Stitched           

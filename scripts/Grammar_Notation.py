@@ -8,12 +8,18 @@ Check List:
     *O review
     *Reduced_Blacklist: not implemented case, Long word (redundance)  
 @author: Juan J. Rueda M.
+
+References:
+    Guzdial, M., Snodgrass, S., & Summerville, A. (2022). Procedural content generation via machine learning. En Synthesis lectures on games and computational intelligence. https://doi.org/10.1007/978-3-031-16719-5
+    Gallotta, R., Arulkumaran, K., & Soros, L. B. (2022, May 12). Surrogate infeasible fitness acquirement fi-2pop for procedural content generation. arXiv.org. https://arxiv.org/abs/2205.05834 
+    James Oxley - Matroid Theory (2011, Oxford University Press, USA) - libgen.lc
 """
 #import sys
 # sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
 import random
 import numpy as np
 import Word_Stitching as ws
+import re
 
 """## Samael  Search Aceleration via Machine Learning «Ceguera de Dios»
 ## https://www.youtube.com/watch?v=FHdlXe1bSe4
@@ -173,7 +179,7 @@ class Grammar:
                             
         return #Simple_Words ##not yet implemented
     
-    #receives a list of words and gives all the possible sublists
+    #receives a list of words and gives all the possible sublists for the especific Grammar
     def Reduced_Blacklist(self, BlackList = ["FVBREDPAWSG","EEE"]): 
         Reducted_Blacklist = []
         for forbidden_word in BlackList:
@@ -208,7 +214,7 @@ class Grammar:
             if len(In_Stack)+1 == len(Filter) :
                 Reducted_Blacklist = Reducted_Blacklist + [forbidden_word]
                 
-        return #Reducted_Blacklist ##not yet implemented
+        return #Reducted_Blacklist ##not implemented yet
     
     #Generates a level of size N from a given grammar
     def N_Level_Generator(self, N, Start = '', seed = None, module = 10):
