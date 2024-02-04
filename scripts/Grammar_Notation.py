@@ -71,18 +71,6 @@ class Word:
         else:
             return ""
     
-    def Tail_Condition(self,n=3):
-        
-        if len(self.__Sequence)<n:
-            return True
-        
-        List = list(self.__Sequence[-n:])
-        
-        if(List[0]==List[1])and(List[2]==List[1]):
-            return False
-        else:
-            return True
-    
     def __repr__(self):
         return f"{self.__Sequence}"
     
@@ -104,12 +92,12 @@ class Graph:
         
         
         last_letter = Word(self.Sequence[0])
-        Starter=True
+        from_keyer=True
         for letter in self.Sequence:
             letter=Word(letter)
             add_letter = True
-            if Starter:
-                Starter=False
+            if from_keyer:
+                from_keyer=False
             else: 
                 for l in self.E[self.V.index(last_letter.__repr__())]:
                     if l.__repr__() == letter.__repr__():
@@ -140,7 +128,7 @@ class Graph:
     
 #Defining grammars
 #receives an exmaple level as a string and an optional list of pre made levels
-#pre made levels need to have same starting and final word the same as the example
+#pre made levels need to have same from_keying and final word the same as the example
 class Grammar:
     
     all = []
@@ -217,28 +205,29 @@ class Grammar:
         return #Reducted_Blacklist ##not implemented yet
     
     #Generates a level of size N from a given grammar
-    def N_Level_Generator(self, N, Start = '', seed = None, module = 10):
+    def N_Level_Generator(self, N, from_key = '', seed = None, module = 10, Gen_Game_mod=0):
         New_Level = Word("")
         random.seed(seed)
         #we don't talk about this part
         if N<= 0:
             return Word("")
         if N<=module:
-            #starts with the level not being feasible
+            #from_keys with the level not being feasible
             Feasible_Level = False
             while not(Feasible_Level):
-                #if not given a premade start, select at random
-                if  Start == '':
+                #if not given a premade from_key, select at random
+                if  from_key == '':
                     n = int(len(self.__Graph.V)*random.random())
                     New_Level = Word(self.__Graph.V[n])
-                #check if start is in graph, else level can't be generated
-                elif Start in self.__Graph.V:
-                    New_Level = Word(Start)
+                #check if from_key is in graph, else level can't be generated
+                elif from_key in self.__Graph.V:
+                    n = int(len(self.__Graph.Vertixes_of(from_key))* random.random())
+                    new_Word = self.__Graph.Vertixes_of(from_key)[n]
                 else:
-                    print("invalid start")
+                    print("invalid from_key")
                     return
-                while not(ws.Jumping_Fiasible_Word(New_Level.__repr__())):
-                    #print("no fiasible start")
+                while not(ws.Jumping_Fiasible_Word(New_Level.__repr__(),Game_mod=Gen_Game_mod)):
+                    #print("no fiasible level")
                     n = int(len(self.__Graph.V)*random.random())
                     New_Level = Word(self.__Graph.V[n])
                 #continue adding valid words to the final level until the end
@@ -250,12 +239,12 @@ class Grammar:
                         n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
                         new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
                     New_Level = New_Level + new_Word
-                Feasible_Level = ws.Jumping_Fiasible_Word(New_Level.__repr__())
+                Feasible_Level = ws.Jumping_Fiasible_Word(New_Level.__repr__(),Game_mod=Gen_Game_mod)
             return New_Level
         else:
             for i in range(N//module):
-                New_Level = New_Level + self.N_Level_Generator(module)
-            New_Level = New_Level + self.N_Level_Generator(N%module)
+                New_Level = New_Level + self.N_Level_Generator(module,New_Level.CloseKey(),module=module)
+            New_Level = New_Level + self.N_Level_Generator(N%module,New_Level.CloseKey(),module=module)
             return New_Level
                 
             
@@ -263,5 +252,5 @@ class Grammar:
 
 ##TEst
 G = Grammar("AABABBCDAEAEABABAABAAWSXMYZAAFFAAETEAAETEAASABASAAEETTEAETTEAAHIAAKLAAESEMEZE[[AAWAA")
-Level = G.N_Level_Generator(20).__repr__()
+Level = G.N_Level_Generator(20,"A").__repr__()
 print(Level)

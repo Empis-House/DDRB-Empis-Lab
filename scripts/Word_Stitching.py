@@ -6,6 +6,8 @@ Check List:
     *Finish Colliders
     *Hazardz Stitching
 @author: Juan J. Rueda M.
+The 2009 mario ai competition - togelius. (n.d.). http://julian.togelius.com/Togelius2010The.pdf 
+Mario level generation from mechanics using scene stitching - arxiv.org. (n.d.-a). https://arxiv.org/pdf/2002.02992 
 
 """
 import sys
@@ -66,14 +68,19 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
     
     All_Landings_Accesibility_Stitched = True
     n = len(Level)
-    Initial = Int_Landings_List[0] #FIX
+     #FIX
     
     #if no landing and beginning or end, this is unplayable
-    if len(Level) == 0 or Initial==0:
+    if len(Level) == 0:
         return False   
+    Initial = Int_Landings_List[0]
+    if Initial==0:      
+        return False
+    
     #if level is only one letter, it is always playable
     if len(Level) == 1:
-        return True                    
+        return True         
+    
     for n_letter in np.arange(n):
         Initial= Int_Landings_List[n_letter]
         R_Band_Height = np.arange(Band_Height)
