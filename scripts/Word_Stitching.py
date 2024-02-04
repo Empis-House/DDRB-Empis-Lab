@@ -74,7 +74,8 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
     if len(Level) == 0:
         return False   
     Initial = Int_Landings_List[0]
-    if Initial==0:      
+    Last = Int_Colliders_List[-1]
+    if Initial==0 or Last==0:      
         return False
     
     #if level is only one letter, it is always playable
