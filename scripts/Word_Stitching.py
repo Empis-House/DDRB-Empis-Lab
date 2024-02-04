@@ -71,7 +71,7 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
      #FIX
     
     #if no landing and beginning or end, this is unplayable
-    if len(Level) == 0:
+    if n == 0:
         return False   
     Initial = Int_Landings_List[0]
     Last = Int_Colliders_List[-1]

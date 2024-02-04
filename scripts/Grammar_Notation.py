@@ -92,12 +92,12 @@ class Graph:
         
         
         last_letter = Word(self.Sequence[0])
-        from_keyer=True
+        Starter=True
         for letter in self.Sequence:
             letter=Word(letter)
             add_letter = True
-            if from_keyer:
-                from_keyer=False
+            if Starter:
+                Starter=False
             else: 
                 for l in self.E[self.V.index(last_letter.__repr__())]:
                     if l.__repr__() == letter.__repr__():
@@ -128,7 +128,7 @@ class Graph:
     
 #Defining grammars
 #receives an exmaple level as a string and an optional list of pre made levels
-#pre made levels need to have same from_keying and final word the same as the example
+#pre made levels need to have same starting and final word the same as the example
 class Grammar:
     
     all = []
@@ -223,6 +223,7 @@ class Grammar:
                 elif from_key in self.__Graph.V:
                     n = int(len(self.__Graph.Vertixes_of(from_key))* random.random())
                     new_Word = self.__Graph.Vertixes_of(from_key)[n]
+                    New_Level = New_Level + new_Word
                 else:
                     print("invalid from_key")
                     return
