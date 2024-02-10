@@ -209,6 +209,7 @@ class Grammar:
         New_Level = Word("")
         random.seed(seed)
         #we don't talk about this part
+        module = max(10,module)
         if N<= 0:
             return Word("")
         if N<=module:
@@ -227,10 +228,17 @@ class Grammar:
                 else:
                     print("invalid from_key")
                     return
+                i=0
                 while not(ws.Jumping_Fiasible_Word(New_Level.__repr__(),Game_mod=Gen_Game_mod)):
                     #print("no fiasible level")
-                    n = int(len(self.__Graph.V)*random.random())
-                    New_Level = Word(self.__Graph.V[n])
+                    if from_key == '' or i>10:
+                        n = int(len(self.__Graph.V)*random.random())
+                        New_Level = Word(self.__Graph.V[n])
+                    else:
+                        n = int(len(self.__Graph.Vertixes_of(from_key))* random.random())
+                        new_Word = self.__Graph.Vertixes_of(from_key)[n]
+                        New_Level = New_Level + new_Word
+                    i=i+1
                 #continue adding valid words to the final level until the end
                 #you need to observe the relations in the graph
                 while len(New_Level)<N:
@@ -244,7 +252,10 @@ class Grammar:
             return New_Level
         else:
             for i in range(N//module):
-                New_Level = New_Level + self.N_Level_Generator(module,New_Level.CloseKey(),module=module)
+                Level_Piece = self.N_Level_Generator(module,New_Level.CloseKey(),module=max(10,int(module/2)))
+                while not(ws.Jumping_Fiasible_Word(Level_Piece.__repr__(),Game_mod=Gen_Game_mod)):
+                    Level_Piece = self.N_Level_Generator(module,New_Level.CloseKey(),module=max(10,int(module/2)))
+                New_Level = New_Level + Level_Piece
             New_Level = New_Level + self.N_Level_Generator(N%module,New_Level.CloseKey(),module=module)
             return New_Level
                 
