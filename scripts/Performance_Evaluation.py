@@ -1,14 +1,21 @@
 # -*- coding: utf-8 -*-
 """
 Created on Thu Sep 21 11:13:44 2023
-
-@author: PC
+Check List:
+    *Planning
+@author: Juan J. Rueda M.
 """
 import pandas as pd
 import Grammar_Notation as gn
 
 def Performance(level):
-    return list(level).count("E")*10/len(level)
+    if len(level)==0:
+        return NotImplementedError()
+    Count=0
+    array = ["E","Q","T","d","i","k","v"]
+    for x in array:
+        Count = Count + list(level).count(x)
+    return Count/len(level)
 
 Levels_Performance = pd.DataFrame(columns=["Level_String","Added_Wordlist", "Performance"])
 
