@@ -14,6 +14,8 @@ Sub Objectives:
     3. Implement an RL Agent to balance the Reward component, setting all rewards* across the level to induce the User/Agent to achieve the expected jump performance.
     
     4. Create an Environment Manager which controls hyperparameters of previous components to optimize long-term User/Agent results with increasing Objective performance.
+
+    5. Test the complete environment with different Mario Bros player ML-agents. The model's objective is to improve the original ML-agent's robustness. Additionally, we believe our model would accelerate its convergence to optimal performance.
     
 * Also, we expect to test it in a real game, with a version of the Dynamic Difficulty Reward Balancing trained with multiple Artificial Agents.
 
