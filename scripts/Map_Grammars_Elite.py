@@ -15,12 +15,14 @@ import Word_Stitching as ws
 import Performance_Evaluation as pe
 import pandas as pd
 import time
+from numba import njit
 import numpy as np
 
 seed=10
 example_code = "mix"
-Level_Len = 20
-module=10
+Level_Len = 640
+module = int(Level_Len/2)
+Game_Mode = 0
 
 df = pd.read_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_{}_1.txt'.format(example_code), delimiter=',')
 
@@ -49,18 +51,69 @@ def Display_Level(Level, level_name=None, df = df):
 class Map_Elite:
     all = []
     
-    def __init__(self, function, alphas =[0]):
+    def __init__(self, function, alphas =[0], Variety_Dominess = [], Grid_points =[]):
         # function must acept a Level as input
         # fuction must have Image the real interval [0,1]
         # The Filtter will capting the optimal value (min)
         self.__N = len(alphas)
         self.__f = function
         self.__alphas = alphas
-        self.__Opt_Values = np.ones(self.__N)
-        self.__Optimal_strings = [""]*self.__N
+        self.__Variety_Dominess = Variety_Dominess
+        
+        self.__Opt_Values = None
+        self.__Optimal_strings = None
+        
+        self.__Grid_points = Grid_points
+        
+        if not(self.__Variety_Dominess):
+            self.__Opt_Values = np.ones(self.__N)
+            self.__Optimal_strings = [""]*self.__N
+            
+        elif len(Variety_Dominess) == len(self.__Grid_points):
+            Dominess_Shape = [len(x) for x in self.__Grid_points]+[self.__N]
+            
+            self.__Opt_Values = np.ones(Dominess_Shape)
+            self.__Optimal_strings = [""]*self.__N
+            
+            Temp = [Dominess_Shape[-i] for i in range(1,len(Dominess_Shape)+1)]
+            
+            for d in Temp:
+                self.__Optimal_strings = [""]*d
+                
+        else:
+            print("The Variety Grid failse, the Map have set as Default")
+            self.__Opt_Values = np.ones(self.__N)
+            self.__Optimal_strings = [""]*self.__N
+        
             
     def Quest(self, Level):
         y = self.__f(Level)
+        
+        if not(self.__Variety_Dominess):
+            for i in range(self.__N):
+                if self.__Optimal_strings[i]=="" or np.abs(self.__alphas[i]-y) < np.abs(self.__alphas[i]-self.__Opt_Values[i]):
+                    self.__Opt_Values[i] = y
+                    self.__Optimal_strings[i] = Level
+            return
+        
+        Level_Vector = [f(Level) for f in self.__Variety_Dominess]
+        String_walk = self.__Optimal_string
+        print(String_walk)
+        
+        for i in range(len(Level_Vector)):
+            p=1
+            coordinate = None
+            print(self.__Optimal_strings[i])
+            print(Level_Vector)
+            
+            for j in range(len(self.__Grid_points[i])):
+                if abs(Level_Vector[i]-self.__Grid_points[i][j])<p:
+                    p = Level_Vector[i]-self.__Grid_points[i][j]
+                    coordinate = j
+                    
+            
+            
+        
         for i in range(self.__N):
             if self.__Optimal_strings[i]=="" or np.abs(self.__alphas[i]-y) < np.abs(self.__alphas[i]-self.__Opt_Values[i]):
                 self.__Opt_Values[i] = y
@@ -142,31 +195,31 @@ def Landings_Score(Level):
 
 # map-elites
 
-Map_Landings_Score = Map_Elite(Landings_Score,alphas=[0,0.5,1])
+Map_Landings_Score = Map_Elite(Landings_Score,alphas=[0,1])#, Variety_Dominess=[pe.Performance],Grid_points=[[0,0.1,0.25,0.5]])
 Map_Performance= Map_Elite(pe.Performance,alphas=[0,0.1,0.25,0.5])
 
 level_str = Extract_Level_String(["6-3"])
 
 G = gn.Grammar(level_str)
-Level = G.N_Level_Generator(Level_Len,module=module).__repr__()
-while not(ws.Jumping_Fiasible_Word(Level)):
-    Level = G.N_Level_Generator(Level_Len,module=module).__repr__()
+Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
+while not(ws.Jumping_Fiasible_Word(Level,Game_mod=Game_Mode)):
+    Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
 Map_Landings_Score.Quest(Level)
 Map_Performance.Quest(Level)
 
 
 for j in range(1):
-    print("Start",j)
+    print("Start",Level_Len)
     print("XX", "t", "Time", "--", "Performance", "--","--","--","--" "Landings_Score", "--","--","--","--", "Fiasible_Word %")
     base_time = time.time()
     t=0
     T=0
-    for i in range(500):
-        pre_Level = G.N_Level_Generator(Level_Len,module=module).__repr__()
+    for i in range(1000):
+        pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
         T+=1
-        while not(ws.Jumping_Fiasible_Word(pre_Level)):
+        while not(ws.Jumping_Fiasible_Word(pre_Level,Game_mod=Game_Mode)):
             T+=1
-            pre_Level = G.N_Level_Generator(Level_Len,module=module).__repr__()
+            pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
         
         t+=1
         Map_Landings_Score.Quest(pre_Level)
@@ -178,11 +231,11 @@ for j in range(1):
             print(i, "t", "%.2f" % (delta_time/60), "--", Map_Performance.Report(), "--","--", Map_Landings_Score.Report(), "--", "%.2f" % (t/T*100),"%")
     delta_time = time.time() - base_time
     print(i, "t", "%.2f" % (delta_time/60), "--", Map_Performance.Report(), "--","--", Map_Landings_Score.Report(), "--", "%.2f" % (t/T*100),"%")
-    Map_Performance.Display_Range(0,3)
-    Map_Landings_Score.Display_Range(0,2)
+    #Map_Performance.Display_Range(0,3)
+    #Map_Landings_Score.Display_Range(0,1)
     
 
 Display_Level(Map_Performance.Report(Type = "Strings")[0],level_name="Performance_opt=0")
 Display_Level(Map_Performance.Report(Type = "Strings")[1],level_name="Performance_opt=0.1")  
 Display_Level(Map_Performance.Report(Type = "Strings")[2],level_name="Performance_opt=0.25")
-Display_Level(Map_Performance.Report(Type = "Strings")[3],level_name="Performance_opt=0.5")    
+Display_Level(Map_Performance.Report(Type = "Strings")[3],level_name="Performance_opt=0.5") 
