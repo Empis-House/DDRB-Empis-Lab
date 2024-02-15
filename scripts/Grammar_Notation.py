@@ -231,9 +231,12 @@ class Grammar:
                 i=0
                 while not(ws.Jumping_Fiasible_Word(New_Level.__repr__(),Game_mod=Gen_Game_mod)):
                     #print("no fiasible level")
-                    if from_key == '' or i>10:
+                    if from_key == '':
                         n = int(len(self.__Graph.V)*random.random())
                         New_Level = Word(self.__Graph.V[n])
+                    elif i>10:
+                        New_Level = Word(from_key)
+                        from_key = ''
                     else:
                         n = int(len(self.__Graph.Vertixes_of(from_key))* random.random())
                         new_Word = self.__Graph.Vertixes_of(from_key)[n]
@@ -264,5 +267,5 @@ class Grammar:
 
 ##TEst
 G = Grammar("AABABBCDAEAEABABAABAAWSXMYZAAFFAAETEAAETEAASABASAAEETTEAETTEAAHIAAKLAAESEMEZE[[AAWAA")
-Level = G.N_Level_Generator(20,"A").__repr__()
+Level = G.N_Level_Generator(40,module=20).__repr__()
 print(Level)
