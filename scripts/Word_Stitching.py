@@ -58,8 +58,7 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
     
     Game_Mods:
         0 * classic lateral Scroll
-        1 * Exploration
-        2 * inverse lateral Scroll
+        1 * inverse lateral Scroll
         """
     
     Structures_id = [int(ord(x)-65) for x in list(Level)]
@@ -80,7 +79,10 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
     
     #if level is only one letter, it is always playable
     if len(Level) == 1:
-        return True         
+        return True
+
+    LA_individually_Stitched_L = False
+    JW_individually_Stitched = False         
     
     for n_letter in np.arange(n):
         Initial= Int_Landings_List[n_letter]
@@ -93,63 +95,44 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
         
         #Stitches = GPU_Stitching(Level, Forward_Stitching,Back_Stiching, R_Band_Height, Initial, n_letter)
         
-        Path_Blocked = False
-        #check forward for landings
+        
         for i in R_Band_Height:
+            
+            
             if Punctual_Binary_Prop(Initial, i) == 1:
-                LA_individually_Stitched_R = False
                 LA_individually_Stitched_L = False
                 JW_individually_Stitched = False
-                for j in Forward_Stitching:
-                    Int_Landing = Int_Landings_List[j]
-                    Int_Collider = Int_Colliders_List[j]
-                    
-                    #if there's free pass
-                    if not(Path_Blocked):
-                        if Range_Binary_Prop(Int_Landing,0,i+Max_Height)!= 0:
-                            JW_individually_Stitched = True
-                                        
-                        if not(JW_individually_Stitched) and (Int_Landing != Int_Collider):
-                            #Back Stitching
-                            
-                            Path_Blocked = True
-                            JW_individually_Stitched = True #Temp
-                        
-                        if j ==  min(n_letter + Max_Length+1, n)-1:
-                            Path_Blocked = True
-                                
-                    if Range_Binary_Prop(Int_Landing,i-Max_Height,i)!= 0:
-                            LA_individually_Stitched_R = True
                 
-                #check if exist an alternative path                              
+                #check for each land if exist previus land to jump from                             
                 for j in Back_Stiching:
                         
                     Int_Landing =  Int_Landings_List[j]
                         
-                    if Range_Binary_Prop(Int_Landing,i-Max_Height,i)!= 0:
+                    if Range_Binary_Prop(Int_Landing,i-Max_Height,Band_Height)!= 0:
                             LA_individually_Stitched_L = True 
+                            
+                #check for each land if exist other land to jump to
+                for j in np.concatenate((Forward_Stitching,Back_Stiching), axis=0) :
+                    
+                    Int_Landing =  Int_Landings_List[j]
+                    
+                    if Range_Binary_Prop(Int_Landing,0,i+Max_Height)!= 0:
+                            JW_individually_Stitched = True
+                
         
         #setting up specific cases   
         if Initial == 0:
-            JW_individually_Stitched = True
-            LA_individually_Stitched_R = True
             LA_individually_Stitched_L = True
-            
-        if n_letter == len(Level)-1:
             JW_individually_Stitched = True
-            LA_individually_Stitched_R = True
+            
             
         if n_letter == 0:
             LA_individually_Stitched_L = True
+            JW_individually_Stitched = True
             
-        if Game_mod == 0:
-            LA_individually_Stitched_R = True
-        elif Game_mod == 2:
-            LA_individually_Stitched_L = True
                     
         #Check if everything is true
-        All_Landings_Accesibility_Stitched = All_Landings_Accesibility_Stitched and LA_individually_Stitched_L and LA_individually_Stitched_R
-        
+        All_Landings_Accesibility_Stitched = All_Landings_Accesibility_Stitched and LA_individually_Stitched_L and JW_individually_Stitched
         if not(All_Landings_Accesibility_Stitched):
             return All_Landings_Accesibility_Stitched
         
