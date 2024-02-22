@@ -15,16 +15,15 @@ import Word_Stitching as ws
 import Performance_Evaluation as pe
 import pandas as pd
 import time
-from numba import njit
 import numpy as np
 
-seed=10
-example_code = "mix"
-Level_Len = 640
+seed=None
+example_code = "1-3"
+Level_Len = 80
 module = int(Level_Len/2)
 Game_Mode = 0
 
-df = pd.read_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_{}_1.txt'.format(example_code), delimiter=',')
+#read structures
 
 
 #display and save final level if name is included
@@ -32,7 +31,7 @@ def Display_Level(Level, level_name=None, df = df):
     
     print("\n",pe.Performance(Level))
     print(Landings_Score(Level))
-    print(ws.Jumping_Fiasible_Word(Level))
+    print(ws.Jumping_Fiasible_Word(Level,knowledge = Knowledge))
             
     Display = pd.DataFrame(columns= ["{}".format(i) for i in range(14)])
     for Key in list(Level):
@@ -96,11 +95,11 @@ class Map_Elite:
                     self.__Optimal_strings[i] = Level
             return
         
-        Level_Vector = [f(Level) for f in self.__Variety_Dominess]
+        #Level_Vector = [f(Level) for f in self.__Variety_Dominess]
         String_walk = self.__Optimal_string
         print(String_walk)
         
-        for i in range(len(Level_Vector)):
+        """for i in range(len(Level_Vector)):
             p=1
             coordinate = None
             print(self.__Optimal_strings[i])
@@ -109,7 +108,7 @@ class Map_Elite:
             for j in range(len(self.__Grid_points[i])):
                 if abs(Level_Vector[i]-self.__Grid_points[i][j])<p:
                     p = Level_Vector[i]-self.__Grid_points[i][j]
-                    coordinate = j
+                    coordinate = j"""
                     
             
             
@@ -196,16 +195,16 @@ def Landings_Score(Level):
 # map-elites
 
 Map_Landings_Score = Map_Elite(Landings_Score,alphas=[0,1])#, Variety_Dominess=[pe.Performance],Grid_points=[[0,0.1,0.25,0.5]])
-Map_Performance= Map_Elite(pe.Performance,alphas=[0,0.1,0.25,0.5])
+Map_Performance= Map_Elite(pe.Performance,alphas=[0,0.1,1])
 
-level_str = Extract_Level_String(["6-3"])
+level_str = Extract_Level_String([example_code])
 
-G = gn.Grammar(level_str)
-Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
-while not(ws.Jumping_Fiasible_Word(Level,Game_mod=Game_Mode)):
-    Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
-Map_Landings_Score.Quest(Level)
-Map_Performance.Quest(Level)
+G = gn.Grammar(level_str,knowledge = Knowledge)
+pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
+while not(ws.Jumping_Fiasible_Word(pre_Level, knowledge = Knowledge, Game_mod=Game_Mode)):
+    pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
+Map_Landings_Score.Quest(pre_Level)
+Map_Performance.Quest(pre_Level)
 
 
 for j in range(1):
@@ -217,7 +216,7 @@ for j in range(1):
     for i in range(1000):
         pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
         T+=1
-        while not(ws.Jumping_Fiasible_Word(pre_Level,Game_mod=Game_Mode)):
+        while not(ws.Jumping_Fiasible_Word(pre_Level, knowledge = Knowledge, Game_mod=Game_Mode)):
             T+=1
             pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
         
@@ -235,7 +234,10 @@ for j in range(1):
     #Map_Landings_Score.Display_Range(0,1)
     
 
-Display_Level(Map_Performance.Report(Type = "Strings")[0],level_name="Performance_opt=0")
-Display_Level(Map_Performance.Report(Type = "Strings")[1],level_name="Performance_opt=0.1")  
-Display_Level(Map_Performance.Report(Type = "Strings")[2],level_name="Performance_opt=0.25")
-Display_Level(Map_Performance.Report(Type = "Strings")[3],level_name="Performance_opt=0.5") 
+Display_Level(Map_Performance.Report(Type = "Strings")[0],level_name="Performance\{}_opt=0".format(example_code))
+Display_Level(Map_Performance.Report(Type = "Strings")[1],level_name="Performance\{}_opt=0.1".format(example_code))  
+Display_Level(Map_Performance.Report(Type = "Strings")[2],level_name="Performance\{}_opt=1".format(example_code))
+
+
+Display_Level(Map_Landings_Score.Report(Type = "Strings")[0],level_name="Landings_Score\{}_opt=0".format(example_code))
+Display_Level(Map_Landings_Score.Report(Type = "Strings")[1],level_name="Landings_Score\{}_opt=1".format(example_code))

@@ -133,11 +133,12 @@ class Grammar:
     
     all = []
     
-    def __init__(self, ExampleLevel, WordsList = []): 
+    def __init__(self, ExampleLevel, knowledge, WordsList = []): 
         
         self.__ExampleLevel = ExampleLevel 
         self.__WordsList = WordsList
         self.__Graph = Graph(self.__ExampleLevel, self.__WordsList)
+        self.___Knowledge = knowledge
             
         Grammar.all = Grammar.all + [self]
             
@@ -149,7 +150,10 @@ class Grammar:
         self.__Graph = Graph(self.__ExampleLevel, self.WordsList)
         
     def Words_List(self):
-        print(self.__WordsList)
+        return self.__WordsList
+        
+    def Knowledge(self):
+        return self.___Knowledge
     
     #gets all possible grammars of len 2
     def Simple_words(self):
@@ -228,8 +232,9 @@ class Grammar:
                 else:
                     print("invalid from_key")
                     return
+                
                 i=0
-                while not(ws.Jumping_Fiasible_Word(New_Level.__repr__(),Game_mod=Gen_Game_mod)):
+                while not(ws.Jumping_Fiasible_Word(New_Level.__repr__(), knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
                     #print("no fiasible level")
                     if from_key == '':
                         n = int(len(self.__Graph.V)*random.random())
@@ -242,6 +247,8 @@ class Grammar:
                         new_Word = self.__Graph.Vertixes_of(from_key)[n]
                         New_Level = New_Level + new_Word
                     i=i+1
+                
+                    
                 #continue adding valid words to the final level until the end
                 #you need to observe the relations in the graph
                 while len(New_Level)<N:
@@ -251,21 +258,14 @@ class Grammar:
                         n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
                         new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
                     New_Level = New_Level + new_Word
-                Feasible_Level = ws.Jumping_Fiasible_Word(New_Level.__repr__(),Game_mod=Gen_Game_mod)
+                Feasible_Level = ws.Jumping_Fiasible_Word(New_Level.__repr__(), knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)
             return New_Level
         else:
             for i in range(N//module):
                 Level_Piece = self.N_Level_Generator(module,New_Level.CloseKey(),module=max(10,int(module/2)))
-                while not(ws.Jumping_Fiasible_Word(Level_Piece.__repr__(),Game_mod=Gen_Game_mod)):
+                while not(ws.Jumping_Fiasible_Word(Level_Piece.__repr__(), knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
                     Level_Piece = self.N_Level_Generator(module,New_Level.CloseKey(),module=max(10,int(module/2)))
                 New_Level = New_Level + Level_Piece
             New_Level = New_Level + self.N_Level_Generator(N%module,New_Level.CloseKey(),module=module)
             return New_Level
                 
-            
-
-
-##TEst
-G = Grammar("AABABBCDAEAEABABAABAAWSXMYZAAFFAAETEAAETEAASABASAAEETTEAETTEAAHIAAKLAAESEMEZE[[AAWAA")
-Level = G.N_Level_Generator(40,module=20).__repr__()
-print(Level)
