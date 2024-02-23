@@ -18,12 +18,19 @@ import time
 import numpy as np
 
 seed=None
-example_code = "1-3"
+example_code = "5-1"
 Level_Len = 80
-module = int(Level_Len/2)
+module = 80
 Game_Mode = 0
 
 #read structures
+df = pd.read_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_[{}].txt'.format(example_code))
+
+#pass info to numpy
+Columns = df.columns.to_numpy()
+dfnp = np.transpose(df.to_numpy())
+Knowledge = dfnp[3:]
+
 
 
 #display and save final level if name is included

@@ -26,7 +26,7 @@ tile_colors = {
     "right pipe": (0, 230, 0),  # Green
     "collectable": (255, 255, 0),  # Gold
     "ground": (160, 50, 40),  # brick
-    "Cannon bottom": (128, 0, 0)  # Maroon
+    "cannon": (75,83,32)  # Maroon
 }
 
 
@@ -79,7 +79,7 @@ mario_tiles = {
     }
 }
 
-example_code = "2-1"
+example_code = "5-1"
 
 csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=0.txt'.format(example_code)
 output_image_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=0.png'.format(example_code)
