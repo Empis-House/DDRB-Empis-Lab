@@ -85,7 +85,7 @@ class Word:
 class Graph:
     def __init__(self, ExampleLevel, WordsList = []):
         self.Sequence = list(ExampleLevel)
-        self.V = list(set(ExampleLevel))
+        self.V = list(set(ExampleLevel.replace(' ', '')))
         temp = np.empty((len(self.V),0))
         self.E = [list(x) for x in temp]
         del(temp)
@@ -94,11 +94,13 @@ class Graph:
         last_letter = Word(self.Sequence[0])
         Starter=True
         for letter in self.Sequence:
-            letter=Word(letter)
-            add_letter = True
-            if Starter:
+            if letter == " ":
+                Starter=True
+            elif Starter:
                 Starter=False
             else: 
+                letter=Word(letter)
+                add_letter = True
                 for l in self.E[self.V.index(last_letter.__repr__())]:
                     if l.__repr__() == letter.__repr__():
                         add_letter = False

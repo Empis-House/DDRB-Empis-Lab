@@ -79,7 +79,7 @@ mario_tiles = {
     }
 }
 
-example_code = "5-1"
+example_code = ["1-2","4-2"]
 
 csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=0.txt'.format(example_code)
 output_image_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=0.png'.format(example_code)

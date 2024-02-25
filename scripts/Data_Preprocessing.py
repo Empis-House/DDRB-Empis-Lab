@@ -9,10 +9,6 @@ Check List:
 @author: Juan J. Rueda M.
 """
 
-import sys
-
-#sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
-# sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB")
 import pandas as pd
 # import Grammar_Notation as gn
 
@@ -93,4 +89,4 @@ def Save_Mix_Structures(Ex_Levels_List):
     Keys_Structures.to_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_{}.txt'.format(Ex_Levels_List), index=False)
 
     
-Save_Mix_Structures(['2-1'])
+Save_Mix_Structures(['1-2','4-2'])

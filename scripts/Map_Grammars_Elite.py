@@ -18,13 +18,13 @@ import time
 import numpy as np
 
 seed=None
-example_code = "5-1"
+example_code = ["1-2","4-2"]
 Level_Len = 80
 module = 80
 Game_Mode = 0
 
 #read structures
-df = pd.read_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_[{}].txt'.format(example_code))
+df = pd.read_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_{}.txt'.format(example_code))
 
 #pass info to numpy
 Columns = df.columns.to_numpy()
@@ -76,15 +76,9 @@ class Map_Elite:
             self.__Optimal_strings = [""]*self.__N
             
         elif len(Variety_Dominess) == len(self.__Grid_points):
-            Dominess_Shape = [len(x) for x in self.__Grid_points]+[self.__N]
             
-            self.__Opt_Values = np.ones(Dominess_Shape)
-            self.__Optimal_strings = [""]*self.__N
             
-            Temp = [Dominess_Shape[-i] for i in range(1,len(Dominess_Shape)+1)]
             
-            for d in Temp:
-                self.__Optimal_strings = [""]*d
                 
         else:
             print("The Variety Grid failse, the Map have set as Default")
@@ -102,9 +96,6 @@ class Map_Elite:
                     self.__Optimal_strings[i] = Level
             return
         
-        #Level_Vector = [f(Level) for f in self.__Variety_Dominess]
-        String_walk = self.__Optimal_string
-        print(String_walk)
         
         """for i in range(len(Level_Vector)):
             p=1
@@ -115,7 +106,6 @@ class Map_Elite:
             for j in range(len(self.__Grid_points[i])):
                 if abs(Level_Vector[i]-self.__Grid_points[i][j])<p:
                     p = Level_Vector[i]-self.__Grid_points[i][j]
-                    coordinate = j"""
                     
             
             
@@ -204,7 +194,7 @@ def Landings_Score(Level):
 Map_Landings_Score = Map_Elite(Landings_Score,alphas=[0,1])#, Variety_Dominess=[pe.Performance],Grid_points=[[0,0.1,0.25,0.5]])
 Map_Performance= Map_Elite(pe.Performance,alphas=[0,0.1,1])
 
-level_str = Extract_Level_String([example_code])
+level_str = Extract_Level_String([example_code[0]]) +" "+ Extract_Level_String([example_code[1]])
 
 G = gn.Grammar(level_str,knowledge = Knowledge)
 pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
