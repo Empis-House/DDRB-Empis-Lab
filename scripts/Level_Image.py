@@ -2,7 +2,7 @@
 """
 Created on Wed Dec 20 19:10:23 2023
 
-@author: PC
+@author: Programmed with LLM
 """
 
 from PIL import Image, ImageDraw
@@ -12,21 +12,21 @@ sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB")
 # Define tile colors
 tile_colors = {
     "solid": (0, 0, 255),  # Blue
-    "breakable": (255, 255, 0),  # Yellow
+    "breakable": (200, 80, 70),  # Yellow
     "passable": (0, 255, 0),  # Green
     "empty": (173, 216, 230),  # ligth blue
     "question block": (255, 165, 0),  # Orange
     "full question block": (255, 69, 0),  # Red-Orange
-    "damaging": (177, 18, 38),  # Red
+    "damaging": (100,0,0),  # Red
     "hazard": (128, 0, 128),  # Purple
     "moving": (255, 0, 255),  # Magenta
-    "top-left pipe": (128, 128, 128),  # Gray
-    "top-right pipe": (128, 128, 128),  # Gray
-    "left pipe": (128, 128, 128),  # Gray
-    "right pipe": (128, 128, 128),  # Gray
-    "collectable": (255, 215, 0),  # Gold
-    "ground": (188, 74, 60),  # brick
-    "Cannon bottom": (128, 0, 0)  # Maroon
+    "top-left pipe": (0, 200, 100),  # D. Green
+    "top-right pipe": (0, 200, 100),  # D. Green
+    "left pipe": (0, 230, 0),  # Green
+    "right pipe": (0, 230, 0),  # Green
+    "collectable": (255, 255, 0),  # Gold
+    "ground": (160, 50, 40),  # brick
+    "cannon": (75,83,32)  # Maroon
 }
 
 
@@ -79,22 +79,34 @@ mario_tiles = {
     }
 }
 
-csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.txt'
-output_image_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.png'
+example_code = ["1-2","4-2"]
+
+csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=0.txt'.format(example_code)
+output_image_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=0.png'.format(example_code)
 
 create_mario_level(csv_file_path, output_image_path)
 
-csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.5.txt'
-output_image_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.5.png'
+csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=0.1.txt'.format(example_code)
+output_image_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=0.1.png'.format(example_code)
 
 create_mario_level(csv_file_path, output_image_path)
 
-csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.1.txt'
-output_image_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.1.png'
+csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=1.txt'.format(example_code)
+output_image_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=1.png'.format(example_code)
 
 create_mario_level(csv_file_path, output_image_path)
 
-csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.25.txt'
-output_image_path = r'../Super_Mario_Brothers_Maps/final_levels\Performance_opt=0.25.png'
+
+
+csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels/Landings_Score/{}_opt=0.txt'.format(example_code)
+output_image_path = r'../Super_Mario_Brothers_Maps/final_levels/Landings_Score/{}_opt=0.png'.format(example_code)
 
 create_mario_level(csv_file_path, output_image_path)
+
+csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels/Landings_Score/{}_opt=1.txt'.format(example_code)
+output_image_path = r'../Super_Mario_Brothers_Maps/final_levels/Landings_Score/{}_opt=1.png'.format(example_code)
+
+create_mario_level(csv_file_path, output_image_path)
+
+
+

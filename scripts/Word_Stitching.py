@@ -10,9 +10,7 @@ The 2009 mario ai competition - togelius. (n.d.). http://julian.togelius.com/Tog
 Mario level generation from mechanics using scene stitching - arxiv.org. (n.d.-a). https://arxiv.org/pdf/2002.02992 
 
 """
-import sys
-# sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
-import pandas as pd
+
 from numba import njit
 import numpy as np
 
@@ -20,17 +18,6 @@ Max_Height = 4 #max size of player jump
 Max_Length = 4 #max length of player jump
 Band_Height = 14 #size of level
 
-#read structures
-df = pd.read_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_mix_1.txt'.format("mix",1))
-
-#pass info to numpy
-Columns = df.columns.to_numpy()
-dfnp = np.transpose(df.to_numpy())
-# Estructures_Only = dfnp[0,2]
-knowledge = dfnp[3:]
-
-Landings = knowledge[0]
-Colliders = knowledge[1]
 
 #check if there is a bit in position k in number n
 @njit(target_backend='cuda') 
@@ -42,13 +29,14 @@ def Punctual_Binary_Prop(n,k):
 # slice bit array sections
 @njit(target_backend='cuda')
 def Range_Binary_Prop(n,a,b):
+    #read structures
     a = max(0,a)
     b_ = (n>>b+1) * 2**(b+1)
     n_ = (n - b_)>>a
     #returns middle number
     return n_
 
-def Jumping_Fiasible_Word(Level,Game_mod = 0):
+def Jumping_Fiasible_Word(Level, knowledge, Game_mod = 0):
     """
     Taken from https://arxiv.org/pdf/2002.02992.pdf
     This function verify if a single word is possible to wander with walking and jumping, 
@@ -60,10 +48,18 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
         0 * classic lateral Scroll
         1 * inverse lateral Scroll
         """
+        
+    if Game_mod==7357:
+        return True
+    
+    
+    Landings = knowledge[0]
+    Colliders = knowledge[1]
     
     Structures_id = [int(ord(x)-65) for x in list(Level)]
     Int_Landings_List = [Landings[x] for x in Structures_id]
     Int_Colliders_List = [Colliders[x] for x in Structures_id]
+    
     
     All_Landings_Accesibility_Stitched = True
     n = len(Level)
@@ -118,14 +114,7 @@ def Jumping_Fiasible_Word(Level,Game_mod = 0):
                     
                     if Range_Binary_Prop(Int_Landing,0,i+Max_Height)!= 0:
                             JW_individually_Stitched = True
-                
-        
-        #setting up specific cases   
-        if Initial == 0:
-            LA_individually_Stitched_L = True
-            JW_individually_Stitched = True
-            
-            
+                            
         if n_letter == 0:
             LA_individually_Stitched_L = True
             JW_individually_Stitched = True

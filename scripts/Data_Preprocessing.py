@@ -9,10 +9,6 @@ Check List:
 @author: Juan J. Rueda M.
 """
 
-import sys
-
-#sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
-# sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB")
 import pandas as pd
 # import Grammar_Notation as gn
 
@@ -27,7 +23,7 @@ def Structure(row):
     return "".join(row[6:]) #this number is dependant of the level
 
 #Function to check landings in a row and remove anything else
-def Landing_Search(row,lands_ID = {"X", "S", "<", ">", "[", "]","B","b"}): #Each mechanic stitching must have a Fi-2pop evaluation
+def Landing_Search(row,lands_ID = {"X", "S", "<", ">", "[", "]","B","b","Q","?"}): #Each mechanic stitching must have a Fi-2pop evaluation
     boolean_lands =""
     for i in range(1,14): #this range is dependant on level size
         #if character is a landing, it stays
@@ -39,7 +35,7 @@ def Landing_Search(row,lands_ID = {"X", "S", "<", ">", "[", "]","B","b"}): #Each
     return int(boolean_lands,2)
 
 #function to check "colliders" or tiles that you can't pass through
-def Colliders_Search (row,collider_ID = {"X", "S", "<", ">", "[", "]","B","b"}):
+def Colliders_Search (row,collider_ID = {"X", "S", "<", ">", "[", "]","B","b","Q","?"}):
     boolean_colliders = "".join(row.apply(lambda x: "1" if x in collider_ID else "0"))
     return int(boolean_colliders,2)
 
@@ -93,4 +89,4 @@ def Save_Mix_Structures(Ex_Levels_List):
     Keys_Structures.to_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_{}.txt'.format(Ex_Levels_List), index=False)
 
     
-Save_Mix_Structures(["8-1"])
+Save_Mix_Structures(['1-2','4-2'])
