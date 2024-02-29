@@ -99,13 +99,36 @@ def Jumping_Fiasible_Word(Level, knowledge, Game_mod = 0):
                 LA_individually_Stitched_L = False
                 JW_individually_Stitched = False
                 
-                #check for each land if exist previus land to jump from                             
+                #check for each land if exist previus land to jump from 
+                
+                stalactite_block = Band_Height                            
+                
                 for j in Back_Stiching:
                         
                     Int_Landing =  Int_Landings_List[j]
-                        
-                    if Range_Binary_Prop(Int_Landing,i-Max_Height,Band_Height)!= 0:
+                    Int_Colliders = Int_Colliders_List[j]
+                    
+                    temp = Initial-2**i
+                    
+                    if temp<2**i:
+                        if Range_Binary_Prop(Int_Landing,i-Max_Height,stalactite_block)!= 0:
                             LA_individually_Stitched_L = True 
+                        elif Int_Colliders != Int_Landing:
+                            first = False
+                            for x in range(0,Band_Height):
+                                if Punctual_Binary_Prop(Int_Colliders,x) == 1 and not(first):
+                                    first = True
+                                    stalactite_block = x 
+                                
+                    else:
+                        first = False
+                        for x in range(i+1,Band_Height):
+                            if Punctual_Binary_Prop(Initial,x) == 1 and not(first):
+                                first = True
+                                stalactite_block = x    
+                        
+                        if Range_Binary_Prop(Int_Landing,i-Max_Height,stalactite_block)!= 0:
+                                LA_individually_Stitched_L = True
                             
                 #check for each land if exist other land to jump to
                 for j in np.concatenate((Forward_Stitching,Back_Stiching), axis=0) :

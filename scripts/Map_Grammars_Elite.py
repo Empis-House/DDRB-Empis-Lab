@@ -18,7 +18,7 @@ import time
 import numpy as np
 
 seed=None
-example_code = ["1-2","4-2"]
+example_code = ["1-1","4-1"]
 Level_Len = 80
 module = 80
 Game_Mode = 0
@@ -77,7 +77,7 @@ class Map_Elite:
             
         elif len(Variety_Dominess) == len(self.__Grid_points):
             
-            
+            return
             
                 
         else:
@@ -105,7 +105,7 @@ class Map_Elite:
             
             for j in range(len(self.__Grid_points[i])):
                 if abs(Level_Vector[i]-self.__Grid_points[i][j])<p:
-                    p = Level_Vector[i]-self.__Grid_points[i][j]
+                    p = Level_Vector[i]-self.__Grid_points[i][j]"""
                     
             
             
