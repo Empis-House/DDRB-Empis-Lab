@@ -55,7 +55,7 @@ def Range_Binary_Prop(n,a,b):
     return n_
 
 
-df = pd.read_csv(r'C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps\Structures_{}_{}.txt'.format("mix",1))
+df = pd.read_csv('../Super_Mario_Brothers_Maps/Structures_{}_{}.txt'.format("mix",1))
 
 Columns = df.columns.to_numpy()
 dfnp = np.transpose(df.to_numpy())

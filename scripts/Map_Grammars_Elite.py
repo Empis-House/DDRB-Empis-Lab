@@ -231,10 +231,10 @@ for j in range(1):
     #Map_Landings_Score.Display_Range(0,1)
     
 
-Display_Level(Map_Performance.Report(Type = "Strings")[0],level_name="Performance\{}_opt=0".format(example_code))
-Display_Level(Map_Performance.Report(Type = "Strings")[1],level_name="Performance\{}_opt=0.1".format(example_code))  
-Display_Level(Map_Performance.Report(Type = "Strings")[2],level_name="Performance\{}_opt=1".format(example_code))
+Display_Level(Map_Performance.Report(Type = "Strings")[0],level_name="Performance/{}_opt=0".format(example_code))
+Display_Level(Map_Performance.Report(Type = "Strings")[1],level_name="Performance/{}_opt=0.1".format(example_code))  
+Display_Level(Map_Performance.Report(Type = "Strings")[2],level_name="Performance/{}_opt=1".format(example_code))
 
 
-Display_Level(Map_Landings_Score.Report(Type = "Strings")[0],level_name="Landings_Score\{}_opt=0".format(example_code))
-Display_Level(Map_Landings_Score.Report(Type = "Strings")[1],level_name="Landings_Score\{}_opt=1".format(example_code))
+Display_Level(Map_Landings_Score.Report(Type = "Strings")[0],level_name="Landings_Score/{}_opt=0".format(example_code))
+Display_Level(Map_Landings_Score.Report(Type = "Strings")[1],level_name="Landings_Score/{}_opt=1".format(example_code))
