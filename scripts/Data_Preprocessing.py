@@ -89,4 +89,4 @@ def Save_Mix_Structures(Ex_Levels_List):
     Keys_Structures.to_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_{}.txt'.format(Ex_Levels_List), index=False)
 
     
-Save_Mix_Structures(['1-2','4-2'])
+Save_Mix_Structures(['5-3','6-1'])

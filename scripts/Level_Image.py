@@ -79,7 +79,12 @@ mario_tiles = {
     }
 }
 
-example_code = ["1-2","4-2"]
+
+csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels/1-1.txt'.format('1-2')
+output_image_path = r'../Super_Mario_Brothers_Maps/final_levels/1-1.png'.format('1-2')
+create_mario_level(csv_file_path, output_image_path)
+
+example_code = ['1-1','1-2']
 
 csv_file_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=0.txt'.format(example_code)
 output_image_path = r'../Super_Mario_Brothers_Maps/final_levels/Performance/{}_opt=0.png'.format(example_code)

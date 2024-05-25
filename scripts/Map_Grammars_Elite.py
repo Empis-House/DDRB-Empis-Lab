@@ -10,34 +10,16 @@ Check List:
 # import sys
 # sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
 
-import Grammar_Notation as gn
-import Word_Stitching as ws
-import Performance_Evaluation as pe
+import scripts.Word_Stitching as ws
+import scripts.Performance_Evaluation as pe
 import pandas as pd
-import time
 import numpy as np
 
-seed=None
-example_code = ["1-1","4-1"]
-Level_Len = 80
-module = 80
-Game_Mode = 0
-
-#read structures
-df = pd.read_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_{}.txt'.format(example_code))
-
-#pass info to numpy
-Columns = df.columns.to_numpy()
-dfnp = np.transpose(df.to_numpy())
-Knowledge = dfnp[3:]
-
-
-
 #display and save final level if name is included
-def Display_Level(Level, level_name=None, df = df):
+def Display_Level(Knowledge, Level, df, level_name=None):
     
-    print("\n",pe.Performance(Level))
-    print(Landings_Score(Level))
+    print("\n",pe.Performance(Level,df=df))
+    print(Landings_Score(Level,df=df))
     print(ws.Jumping_Fiasible_Word(Level,knowledge = Knowledge))
             
     Display = pd.DataFrame(columns= ["{}".format(i) for i in range(14)])
@@ -48,7 +30,7 @@ def Display_Level(Level, level_name=None, df = df):
         
     Display = Display.transpose()
     if level_name != None:
-        Display.to_csv(r'../Super_Mario_Brothers_Maps/final_levels/{}.txt'.format(level_name), index=False,header=False,sep=",")
+        Display.to_csv(r'Super_Mario_Brothers_Maps/final_levels/{}.txt'.format(level_name), index=False,header=False,sep=",")
     
     print(Display)
 
@@ -86,8 +68,8 @@ class Map_Elite:
             self.__Optimal_strings = [""]*self.__N
         
             
-    def Quest(self, Level):
-        y = self.__f(Level)
+    def Quest(self, Level,df):
+        y = self.__f(Level,df=df)
         
         if not(self.__Variety_Dominess):
             for i in range(self.__N):
@@ -140,7 +122,7 @@ class Map_Elite:
 def Structure(row):
   return "".join(row[2:])
 
-def Key_substraction(x, df=df):
+def Key_substraction(x, df):
     "-------------X"
     "---------XXXXX"
     "--------------"
@@ -150,10 +132,10 @@ def Key_substraction(x, df=df):
     else:
         return np.array(df[df["Structures"] ==  x]["Key"])[0]
 
-def Extract_Level_String(examples_codes,df=df):
+def Extract_Level_String(examples_codes,df):
     for example_code in examples_codes:
         Temporal = pd.DataFrame(columns=["Structures","Key"] + ["{}".format(i) for i in range(13)])
-        with open(r"../Super_Mario_Brothers_Maps/Processed/mario-{}.txt".format(example_code)) as infile:
+        with open(r"Super_Mario_Brothers_Maps/Processed/mario-{}.txt".format(example_code)) as infile:
             i = 0
             for line in infile: 
                 Temporal["{}".format(i)] = list(line.split()[0])
@@ -164,14 +146,14 @@ def Extract_Level_String(examples_codes,df=df):
     Level["Structures"] = Level.apply(Structure, axis=1)
     
     for i in range(len(Level["Structures"])):
-        Level["Key"][i]= Key_substraction(Level["Structures"][i])
+        Level["Key"][i]= Key_substraction(Level["Structures"][i], df=df)
         
     return "".join(Level["Key"])
 
 
 
 # Variety Dominess
-def Landings_Score(Level):
+def Landings_Score(Level,df):
     if len(Level)==0:
         print(Level)
         return
@@ -189,52 +171,3 @@ def Landings_Score(Level):
     return Count/(Max * len(Level))
 
 
-# map-elites
-
-Map_Landings_Score = Map_Elite(Landings_Score,alphas=[0,1])#, Variety_Dominess=[pe.Performance],Grid_points=[[0,0.1,0.25,0.5]])
-Map_Performance= Map_Elite(pe.Performance,alphas=[0,0.1,1])
-
-level_str = Extract_Level_String([example_code[0]]) +" "+ Extract_Level_String([example_code[1]])
-
-G = gn.Grammar(level_str,knowledge = Knowledge)
-pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
-while not(ws.Jumping_Fiasible_Word(pre_Level, knowledge = Knowledge, Game_mod=Game_Mode)):
-    pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
-Map_Landings_Score.Quest(pre_Level)
-Map_Performance.Quest(pre_Level)
-
-
-for j in range(1):
-    print("Start",Level_Len)
-    print("XX", "t", "Time", "--", "Performance", "--","--","--","--" "Landings_Score", "--","--","--","--", "Fiasible_Word %")
-    base_time = time.time()
-    t=0
-    T=0
-    for i in range(1000):
-        pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
-        T+=1
-        while not(ws.Jumping_Fiasible_Word(pre_Level, knowledge = Knowledge, Game_mod=Game_Mode)):
-            T+=1
-            pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode).__repr__()
-        
-        t+=1
-        Map_Landings_Score.Quest(pre_Level)
-        Map_Performance.Quest(pre_Level)
-        
-            
-        if i%100 == 0:
-            delta_time = time.time() - base_time
-            print(i, "t", "%.2f" % (delta_time/60), "--", Map_Performance.Report(), "--","--", Map_Landings_Score.Report(), "--", "%.2f" % (t/T*100),"%")
-    delta_time = time.time() - base_time
-    print(i, "t", "%.2f" % (delta_time/60), "--", Map_Performance.Report(), "--","--", Map_Landings_Score.Report(), "--", "%.2f" % (t/T*100),"%")
-    #Map_Performance.Display_Range(0,3)
-    #Map_Landings_Score.Display_Range(0,1)
-    
-
-Display_Level(Map_Performance.Report(Type = "Strings")[0],level_name="Performance\{}_opt=0".format(example_code))
-Display_Level(Map_Performance.Report(Type = "Strings")[1],level_name="Performance\{}_opt=0.1".format(example_code))  
-Display_Level(Map_Performance.Report(Type = "Strings")[2],level_name="Performance\{}_opt=1".format(example_code))
-
-
-Display_Level(Map_Landings_Score.Report(Type = "Strings")[0],level_name="Landings_Score\{}_opt=0".format(example_code))
-Display_Level(Map_Landings_Score.Report(Type = "Strings")[1],level_name="Landings_Score\{}_opt=1".format(example_code))

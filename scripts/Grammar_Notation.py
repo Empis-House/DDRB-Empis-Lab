@@ -18,7 +18,7 @@ References:
 # sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
 import random
 import numpy as np
-import Word_Stitching as ws
+import scripts.Word_Stitching as ws
 import re
 
 """## Samael  Search Aceleration via Machine Learning «Ceguera de Dios»

@@ -36,7 +36,7 @@ warnings.simplefilter('ignore', category=NumbaDeprecationWarning)
 warnings.simplefilter('ignore', category=NumbaPendingDeprecationWarning)
 
 import numpy as np
-import Grammar_Notation as gn
+import scripts.Grammar_Notation as gn
 import time
 from timeit import default_timer as timer 
 

@@ -6,9 +6,9 @@ Check List:
 @author: Juan J. Rueda M.
 """
 import pandas as pd
-import Grammar_Notation as gn
+import scripts.Grammar_Notation as gn
 
-def Performance(level):
+def Performance(level,df):
     if len(level)==0:
         return NotImplementedError()
     Count=0
