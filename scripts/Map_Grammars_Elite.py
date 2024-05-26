@@ -192,7 +192,13 @@ class Map_Elite:
 
     #display and save final level if name is included
     def Display_Level(self,Knowledge, Level, df, level_name=None):
+
+        if Level=="":
+            print("Gap")
+            return
+
         print(ws.Jumping_Fiasible_Word(Level,knowledge = Knowledge))
+
                 
         Display = pd.DataFrame(columns= ["{}".format(i) for i in range(14)])
         for Key in list(Level):
@@ -204,12 +210,29 @@ class Map_Elite:
         if level_name != None:
             Display.to_csv(r'Super_Mario_Brothers_Maps/final_levels/{}.txt'.format(level_name), index=False,header=False,sep=",")
         
-        print(Display)    
+        print(Display)   
 
-    def Show_Coordinate(self,x,Knowledge, df,level_name=None):
-        near_x = self.get_nearest_label(x,self.__Optimal_strings)
-        for level in self.__Optimal_strings[near_x]:
-            self.Display_Level(Knowledge, level, df, level_name)
+    def find_exact_matches(self,reference, quest):
+        # Create a dictionary to map each value in the reference list to its index
+        reference_index_map = {value: idx for idx, value in enumerate(reference)}
+        
+        # List to store the matches
+        matches = []
+        
+        # Iterate over each element in the quest list
+        for q in quest:
+            # Check if the element is in the reference map and append its index if it is
+            if q in reference_index_map:
+                matches.append(reference_index_map[q])
+        
+        return matches
+
+    def Plot_Coordinate(self, cartesian_list, level_curves,Knowledge,df,level_name=None):
+        indexes = self.find_exact_matches(self.__alphas,level_curves)
+        for x in cartesian_list:
+            near_x = self.get_nearest_label(x,self.__Optimal_strings)
+            for i in indexes:
+                self.Display_Level(Knowledge, self.__Optimal_strings[near_x][i], df, level_name)
 
 
 
