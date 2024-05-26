@@ -25,4 +25,6 @@ def Add_Level_To_Performance(level, WordsList = [], Levels_Performance = Levels_
     level_G_ = G_.N_Level_Generator(100).__repr__()
     new_row = [level, WordsList, Performance(level_G_)]
     Levels_Performance.loc[len(Levels_Performance)] = new_row
+
+
     
