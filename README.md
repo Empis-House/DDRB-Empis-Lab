@@ -1,6 +1,5 @@
 # DDRB-Empis-Lab
 
-# Temp: Code must be run from DDRB-Empis-Lab/Scripts and executing Map_Grammars_Elite.py
 
 Principal Objective:
 Create a model which accelerates and diversifies the learning process of classic Mario Bros gameplay ML models via Procedural Content Generation ML and a variant of Dynamic Difficulty Adjustment where we propose that it is necessarily considered a reward-difficulty balancing stead of a direct Difficulty Adjustment.
