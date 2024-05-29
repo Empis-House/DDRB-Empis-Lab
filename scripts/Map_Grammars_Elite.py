@@ -243,5 +243,8 @@ class Map_Elite:
             for i in indexes:
                 self.Display_Level(Knowledge, self.__Optimal_strings[near_x][i], df, level_name)
 
+                original_val = [f(Level=self.__Optimal_strings[near_x][i],df=df) for f in self.__Variety_Dominess]
+                print("variety class: ",near_x," // original_vals: ", original_val, " // Performance: ", self.__f(self.__Optimal_strings[near_x][i],df=df))
+
 
 
