@@ -56,59 +56,59 @@ class Word:
     all = []
     
     def __init__(self, Sequence):
-        self.__Sequence = Sequence
+        self._Sequence = Sequence
         #Word.all = Word.all + [self]
         
     def OpenKey(self):
-        if self.__Sequence:
-            return self.__Sequence[0]
+        if self._Sequence:
+            return self._Sequence[0]
         else:
             return ""
     
     def CloseKey(self):
-        if self.__Sequence:
-            return self.__Sequence[-1]
+        if self._Sequence:
+            return self._Sequence[-1]
         else:
             return ""
     
     def __repr__(self):
-        return f"{self.__Sequence}"
+        return f"{self._Sequence}"
     
     def __add__(self, other):
-        return Word(self.__Sequence + other.__repr__())
+        return Word(self._Sequence + other._Sequence)
     
     def __len__(self):
-        return len(self.__Sequence)
+        return len(self._Sequence)
 
 
 #defining relations between words as an adjacency matrix
 class Graph:
     def __init__(self, ExampleLevel, WordsList = []):
-        self.Sequence = list(ExampleLevel)
-        self.V = list(set(ExampleLevel.replace(' ', '')))
+        self.Sequence = ExampleLevel
+        self.V = list(set(self.Sequence))
         temp = np.empty((len(self.V),0))
         self.E = [list(x) for x in temp]
         del(temp)
         
         
-        last_letter = Word(self.Sequence[0])
+        last_letter = Word([self.Sequence[0]])
         Starter=True
         for letter in self.Sequence:
+            letter=Word([letter])
             if letter == " ":
                 Starter=True
             elif Starter:
                 Starter=False
             else: 
-                letter=Word(letter)
                 add_letter = True
-                for l in self.E[self.V.index(last_letter.__repr__())]:
+                for l in self.E[self.V.index(last_letter.OpenKey())]:
                     if l.__repr__() == letter.__repr__():
                         add_letter = False
                         
                 if add_letter:
-                    self.E[self.V.index(last_letter.__repr__())] = self.E[self.V.index(last_letter.__repr__())]+[letter]
+                    self.E[self.V.index(last_letter.OpenKey())] = self.E[self.V.index(last_letter.OpenKey())]+[letter]
             
-            last_letter=Word(letter)
+            last_letter=letter
             
         self.E = [list(set(x)) for x in self.E]
         
@@ -212,12 +212,12 @@ class Grammar:
     
     #Generates a level of size N from a given grammar
     def N_Level_Generator(self, N, from_key = '', seed = None, module = 10, Gen_Game_mod=0):
-        New_Level = Word("")
+        New_Level = Word([])
         random.seed(seed)
         #we don't talk about this part
         module = max(10,module)
         if N<= 0:
-            return Word("")
+            return Word([])
         if N<=module:
             #from_keys with the level not being feasible
             Feasible_Level = False
@@ -225,7 +225,7 @@ class Grammar:
                 #if not given a premade from_key, select at random
                 if  from_key == '':
                     n = int(len(self.__Graph.V)*random.random())
-                    New_Level = Word(self.__Graph.V[n])
+                    New_Level = Word([self.__Graph.V[n]])
                 #check if from_key is in graph, else level can't be generated
                 elif from_key in self.__Graph.V:
                     n = int(len(self.__Graph.Vertixes_of(from_key))* random.random())
@@ -236,13 +236,13 @@ class Grammar:
                     return
                 
                 i=0
-                while not(ws.Jumping_Fiasible_Word(New_Level.__repr__(), knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
+                while not(ws.Jumping_Fiasible_Word(New_Level._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
                     #print("no fiasible level")
                     if from_key == '':
                         n = int(len(self.__Graph.V)*random.random())
-                        New_Level = Word(self.__Graph.V[n])
+                        New_Level = Word([self.__Graph.V[n]])
                     elif i>10:
-                        New_Level = Word(from_key)
+                        New_Level = Word([from_key])
                         from_key = ''
                     else:
                         n = int(len(self.__Graph.Vertixes_of(from_key))* random.random())
@@ -260,12 +260,12 @@ class Grammar:
                         n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
                         new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
                     New_Level = New_Level + new_Word
-                Feasible_Level = ws.Jumping_Fiasible_Word(New_Level.__repr__(), knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)
+                Feasible_Level = ws.Jumping_Fiasible_Word(New_Level._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)
             return New_Level
         else:
             for i in range(N//module):
                 Level_Piece = self.N_Level_Generator(module,New_Level.CloseKey(),module=max(10,int(module/2)))
-                while not(ws.Jumping_Fiasible_Word(Level_Piece.__repr__(), knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
+                while not(ws.Jumping_Fiasible_Word(Level_Piece._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
                     Level_Piece = self.N_Level_Generator(module,New_Level.CloseKey(),module=max(10,int(module/2)))
                 New_Level = New_Level + Level_Piece
             New_Level = New_Level + self.N_Level_Generator(N%module,New_Level.CloseKey(),module=module)

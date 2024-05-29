@@ -55,10 +55,10 @@ def Jumping_Fiasible_Word(Level, knowledge, Game_mod = 0):
     
     Landings = knowledge[0]
     Colliders = knowledge[1]
-    
-    Structures_id = [int(ord(x)-65) for x in list(Level)]
-    Int_Landings_List = [Landings[x] for x in Structures_id]
-    Int_Colliders_List = [Colliders[x] for x in Structures_id]
+
+    Structures_id = [x for x in list(Level)]
+    Int_Landings_List = [Landings[x] for x in Level]
+    Int_Colliders_List = [Colliders[x] for x in Level]
     
     
     All_Landings_Accesibility_Stitched = True

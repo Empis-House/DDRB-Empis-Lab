@@ -9,12 +9,14 @@ import pandas as pd
 import scripts.Grammar_Notation as gn
 
 def Performance(level,df):
-    if len(level)==0:
-        return NotImplementedError()
     Count=0
-    array = ["E","Q","T","d","i","k","v"]
-    for x in array:
-        Count = Count + list(level).count(x)
+    for Key in level:
+        try:
+            value = list(df.loc[df["token"].astype(int) == Key,"Landings"])[0]
+            if value == 0:
+                Count += 5/3 # The way generation is now configured guarantees a greater ratio of 3 supports for every 5 landing pieces.
+        except Exception as e:
+            print(Key, type(Key),"      ", e)
     return Count/len(level)
 
 Levels_Performance = pd.DataFrame(columns=["Level_String","Added_Wordlist", "Performance"])

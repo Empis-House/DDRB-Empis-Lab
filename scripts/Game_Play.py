@@ -65,7 +65,6 @@ Knowlendg = dfnp[3:]
 
 Landings = Knowlendg[0]
 Colliders = Knowlendg[1]
-print(np.size(Landings))
 
 
 del(df)

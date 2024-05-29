@@ -113,9 +113,19 @@ class Map_Elite:
                 self.__Optimal_strings[input_tuple][i] = Level
         return
     
+    def format_array(self,arr, precision=2):
+        return np.round(arr, precision)
+
+    def printable_formatted_dict(self,d, precision=2):
+        report = []
+        for key, value in d.items():
+            rounded_value = self.format_array(value, precision)
+            report.append({key: rounded_value})
+        return report
+    
     def Report(self, Type = "Values"):
         if Type == "Values":
-            return self.__Opt_Values
+            return self.printable_formatted_dict(self.__Opt_Values)
         if Type == "Strings":
             return self.__Optimal_strings
         else:
@@ -129,43 +139,42 @@ class Map_Elite:
         "---------XXXXX"
         "--------------"
         "-------XXXXXXX"
-        if len(df[df["Structures"] ==  x]["Key"])==0:
+        if len(df[df["Structures"] ==  x]["token"])==0:
             return "?"
         else:
-            return np.array(df[df["Structures"] ==  x]["Key"])[0]
+            return np.array(df[df["Structures"] ==  x]["token"])[0]
 
     def Extract_Level_String(self, examples_codes,df):
         for example_code in examples_codes:
-            Temporal = pd.DataFrame(columns=["Structures","Key"] + ["{}".format(i) for i in range(13)])
+            Temporal = pd.DataFrame(columns=["Structures","token"] + ["{}".format(i) for i in range(13)])
             with open(r"Super_Mario_Brothers_Maps/Processed/mario-{}.txt".format(example_code)) as infile:
                 i = 0
                 for line in infile: 
                     Temporal["{}".format(i)] = list(line.split()[0])
                     i+=1
-            Level = pd.DataFrame(columns=["Structures","Key"] + ["{}".format(i) for i in range(13)])
+            Level = pd.DataFrame(columns=["Structures","token"] + ["{}".format(i) for i in range(13)])
             Level = pd.concat([Level,Temporal], axis=0)
                 
         Level["Structures"] = Level.apply(self.Structure, axis=1)
         
         for i in range(len(Level["Structures"])):
-            Level["Key"][i]= self.Key_substraction(Level["Structures"][i], df=df)
+            Level["token"][i]= self.Key_substraction(Level["Structures"][i], df=df)
             
-        return "".join(Level["Key"])
+        return list(Level["token"])
     
     
     def Generate_Mapping(self,example_code, Knowledge, df, Level_Len, module=None, batch_size=1, epochs=256, seed=None,Game_Mode = 0):
         if not(module):
             module = Level_Len
 
-        level_str = self.Extract_Level_String([example_code[0]],df=df) #+" "+ Extract_Level_String([example_code[1]])
-
+        level_sec = self.Extract_Level_String([example_code[0]],df=df) #+" "+ Extract_Level_String([example_code[1]])
         #Display_Level(Extract_Level_String([example_code[0]]),level_name="1-1".format(example_code),df=df)
         #Display_Level(Extract_Level_String([example_code[1]]),level_name="1-2".format(example_code),df=df)
 
-        G = gn.Grammar(level_str,knowledge = Knowledge)
-        pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed).__repr__()
+        G = gn.Grammar(level_sec,knowledge = Knowledge)
+        pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
         while not(ws.Jumping_Fiasible_Word(pre_Level, knowledge = Knowledge, Game_mod=Game_Mode)):
-            pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed).__repr__()
+            pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
         self.Quest(pre_Level,df=df)
 
 
@@ -176,11 +185,11 @@ class Map_Elite:
             t=0
             T=0
             for i in range(epochs):
-                pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed).__repr__()
+                pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
                 T+=1
                 while not(ws.Jumping_Fiasible_Word(pre_Level, knowledge = Knowledge, Game_mod=Game_Mode)):
                     T+=1
-                    pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed).__repr__()
+                    pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
                 
                 t+=1
                 self.Quest(pre_Level,df=df)
@@ -202,7 +211,7 @@ class Map_Elite:
                 
         Display = pd.DataFrame(columns= ["{}".format(i) for i in range(14)])
         for Key in list(Level):
-            new_row = list(list(df.loc[df["Key"] == Key,"Structures" ])[0])
+            new_row = list(list(df.loc[df["token"] == Key,"Structures" ])[0])
             Display.loc[len(Display)] = new_row
             
             

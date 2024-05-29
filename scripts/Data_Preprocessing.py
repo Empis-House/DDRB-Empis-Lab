@@ -20,7 +20,7 @@ import pandas as pd
 
 #Function to join elements of a row into one string
 def Structure(row):
-    return "".join(row[6:]) #this number is dependant of the level
+    return "".join(row[6:]) 
 
 #Function to check landings in a row and remove anything else
 def Landing_Search(row,lands_ID = {"X", "S", "<", ">", "[", "]","B","b","Q","?"}): #Each mechanic stitching must have a Fi-2pop evaluation
@@ -56,14 +56,14 @@ def Save_Mix_Structures(Ex_Levels_List):
     ### Structures: the string of the row
     ### Landings: Binary code for where the landings are
     ### Colliders: Binary code for where are colliders are 
-    Keys_Structures = pd.DataFrame(columns=["Key", "Structures", "Landings", "Colliders","Reward","Hazard"])
-    Complete_Level = pd.DataFrame(columns=["Structures","Key","Landings", "Colliders","Reward","Hazard"] + ["{}".format(i) for i in range(13)])
+    Keys_Structures = pd.DataFrame(columns=["token", "Structures", "Landings", "Colliders","Reward","Hazard"])
+    Complete_Level = pd.DataFrame(columns=["Structures","token","Landings", "Colliders","Reward","Hazard"] + ["{}".format(i) for i in range(13)])
     Temporal = Complete_Level
     
     # Get the structure for each row
     for example_code in Ex_Levels_List:
-        Temporal = pd.DataFrame(columns=["Structures","Key","Landings", "Colliders"] + ["{}".format(i) for i in range(13)])
-        with open(r"../Super_Mario_Brothers_Maps/Processed/mario-{}.txt".format(example_code)) as infile:
+        Temporal = pd.DataFrame(columns=["Structures","token","Landings", "Colliders"] + ["{}".format(i) for i in range(13)])
+        with open(r"Super_Mario_Brothers_Maps/Processed/mario-{}.txt".format(example_code)) as infile:
             i = 0
             for line in infile: 
                 Temporal["{}".format(i)] = list(line.split()[0])
@@ -71,7 +71,7 @@ def Save_Mix_Structures(Ex_Levels_List):
                 
         Complete_Level = pd.concat([Complete_Level,Temporal], axis=0)
         
-      
+    print(Complete_Level)
     Complete_Level["Structures"] = Complete_Level.apply(Structure, axis=1)
     Complete_Level["Landings"] = Complete_Level.apply(Landing_Search, axis=1)
     Complete_Level["Colliders"] = Complete_Level.apply(Colliders_Search, axis=1)
@@ -84,9 +84,9 @@ def Save_Mix_Structures(Ex_Levels_List):
     
     #Set the keys from ASCII
     for index in Keys_Structures.index:
-        Keys_Structures.loc[index,"Key"] = "{}".format(chr(65+index))
+        Keys_Structures.loc[index,"token"] = index
     
-    Keys_Structures.to_csv(r'../Super_Mario_Brothers_Maps/structures/Structures_{}.txt'.format(Ex_Levels_List), index=False)
+    Keys_Structures.to_csv(r'Super_Mario_Brothers_Maps/structures/Structures_{}.txt'.format(Ex_Levels_List), index=False)
 
     
-Save_Mix_Structures(['5-3','6-1'])
+Save_Mix_Structures(['1-1','1-2','1-3','2-1','3-1','3-3','4-1','4-2','5-1','5-3','6-1','6-2','6-3','7-1','8-1'])

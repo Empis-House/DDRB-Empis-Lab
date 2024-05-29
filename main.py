@@ -26,11 +26,14 @@ def Landings_Score(Level,df):
         return
     Count=0
     Max = -1
-    for Key in list(Level):
-        value = list(df.loc[df["Key"] == Key,"Landings" ])[0]
-        Count += value
-        if value>Max:
-            Max = value
+    for Key in Level:
+        try:
+            value = list(df.loc[df["token"].astype(int) == Key,"Landings"])[0]
+            Count += value
+            if value>Max:
+                Max = value
+        except Exception as e:
+            print(Key, type(Key),"      ", e)
     if Max == 0:
         print(Level)
         return
@@ -43,11 +46,14 @@ def Colliders_Score(Level,df):
         return
     Count=0
     Max = -1
-    for Key in list(Level):
-        value = list(df.loc[df["Key"] == Key,"Colliders" ])[0]
-        Count += value
-        if value>Max:
-            Max = value
+    for Key in Level:
+        try:
+            value = list(df.loc[df["token"].astype(int) == Key,"Colliders" ])[0]
+            Count += value
+            if value>Max:
+                Max = value
+        except Exception as e:
+            print(Key, type(Key),"      ", e)
     if Max == 0:
         print(Level)
         return
@@ -61,7 +67,7 @@ Level_Len = 60
 module = 60 # Temp: module != Level_Len could generate buged levels
 
 #read structures
-df = pd.read_csv(r'Super_Mario_Brothers_Maps/structures/Structures_{}.txt'.format(example_code))
+df = pd.read_csv(r'Super_Mario_Brothers_Maps/structures/Universal_Structures.txt') #.format(example_code))
 
 #pass info to numpy
 Columns = df.columns.to_numpy()
