@@ -49,21 +49,81 @@ Our model is expected to:
 
 
 ## Literature Review
-UNDO
+
+### Mario Bros. generative Template
+
+#### Mario Bros. Game
+#### Mario PCG Framework
+#### Grammars and graphs
+#### Scene stitching
+#### Cuda and Binary Algebra 
+
+---
+
+### Models
+**"there is a budle of the following sections which has not necesarry integrated, onli those with $\dagger$ lable are surly use in the current version."**
+
+#### World Models $\dagger$
+*  [World Models](https://arxiv.org/pdf/1803.10122)
+*  [General agents need world models](https://arxiv.org/pdf/2506.01622)
+
+#### RL Agentic-Player $\dagger$
+
+#### PCGML for DDA and Reward balancing $\dagger$
+
+#### Fi-2Pop and Map-Elites $\dagger$
+In terms of both Evolutionary algoritms and DL, divercity is crucial. While APS approach should have the propose of prefiltered Solvable for sure levels (*Appendix_A pending*), by using ML Surrugate Fi-2Pop (*reference pending*). But it may not admit all the posible soblable levels, , reducing variability in the data. Nevertheless, to compensate that intrisc lose we'll use  multidimentional Map-Elites (*reference pending*) over a grid that allawed us to guarantee some kinds of variability. Resulting in a valuable variablity vs Control trade-off.
+
+However "for sure" the rules that assess if a level is solvable or not, are in dicussion. As far as we can explore at the moment it make very functional levels, but it might include and exclude valid levels, or both, but this assesmemnt is in progress too. (**Discusssion apendix pending**)
+
+The current design use an scene stitching variation, in it there is assumed that a level is solvable if every landing in the last tile has a valid path of landigs. This axioma allowed use to say that a level is solvable, if and only if, for all no-empty-landing tile there exist (almost one) previos tile that has a valid mario movement that connect them (jump or walk). Understanding each mario movement as a validation process, enstead a contruction process as the original scene stitching, allawed us to validate if a random level (o surrugate random level) is solvable, only reading the level from rigth to left just ones. It is no only computationaly eficient, it's also paraleizable in GPU by CUDA support for algebraic operations (*Appendix_A pending*).
+
+Then we use Map-Elites (*Reference pending*) to guarantee some kinds of diversity over the solvable levels filtered. The General idea is to asignate a set of points in as much $F:level->[0,1]$ that discrebe any feature about the level. For example in scripts\Variety_Dominess.py we have some rudimentary functions that disperse very well the space of posible levels. And then choose somo acumulation points $\in [0,1]$. Using a ideal budle of functions we could make it a grid of a $\productoria F_n$ (the multidimencinal fiatures function space). Where each $F_n$ are well distributed over the rang, doing so each node in the grid is conciderable enogh diferent compared to an other member of the grid, but space-correlated in a vectorial way. Each acumulation point will save the best performance in it's rang, it could mean that some time a points in the grid has the same level assigned, but in an ideal {F_n} it is minimized.
+
+In our context the performance function must discribe the the player-Agent performance in jump mechanics
+
+
+#### MOEs
+#### Dynamic Chunking and bit-networks
+Concidered them just because computacional eficiency always to rich levels of latency for real time generation in game and following the law of eficienty models:
+
+*  [BitNet: Scaling 1-bit Transformers for Large Language Models](https://arxiv.org/pdf/2310.11453)
+*  [Dynamic Chunking for End-to-End Hierarchical Sequence Modeling](https://arxiv.org/pdf/2507.07955)
+
+
+#### Sparse autoencoders (Analizing)
+
+*  [Scaling Monosemanticity: Extracting Interpretable Features from Claude 3 Sonnet](https://transformer-circuits.pub/2024/scaling-monosemanticity?curius=4744)
+
+
+---
+
+
+### DDA and Reward Balancing
+
+#### The flow / The Zone
+
+#### DDA
+
+#### Reward
+
+
+---
+
 
 ## Methodology
 
 ### Level Representations
 
-We consider two equivalent approaches for level representation: **Grammars** and **Tile Maps**. Both will be treated interchangeably due to their functional equivalence. Grammars are string representations where each token corresponds to a node in a graph called Solvable Generated Spaces Grammars. These grammars provide optimized generation methods that offer better feature control and computational efficiency compared to pure random generation (*Appendix pending*).
+We consider two equivalent approaches for level representation: **Grammars** and **Tile Maps**. Both will be treated interchangeably due to their functional equivalence. Grammars are string representations where each token corresponds to a node in a graph called Solvable Generated Spaces Grammars. These grammars provide optimized generation methods that offer better feature control and computational efficiency compared to pure random generation (*Appendix_A pending*).
 
-Each token has a dual representation as tiles. Consider an *n*×*m* grid (matching Mario's display screen size), where each coordinate maps to a tile following the **Super_Mario_Brothers_Maps** standard PCG representation format (*references pending - repository link to be recovered*). The tile data is stored in `Super_Mario_Brothers_Maps\Multi-layer\smb-multi-layer.json`.
+Each token has a dual representation as tiles. Consider an *n*×*m* grid (matching Mario's display screen size), where each coordinate maps to a vertical tile following the **Super_Mario_Brothers_Maps** standard PCG representation format (*references pending - repository link to be recovered*). The vertical tile data is stored in `Super_Mario_Brothers_Maps\Multi-layer\smb-multi-layer.json`.
 
 Additionally, each level can be represented as:
 - A layered binary tensor of dimensions *n*×*m*×*k* (where *k* is the number of features per tile)
-- A *k*×*m*-dimensional vector with integers between 0 and 2^*n*
+- A *k*×*m*-dimensional vector with integers between 0 and (2^*(n+1)*)-1
 
-The integer vector representation is optimal for CUDA implementations, providing acceleration benefits and faster grammar system processing through Algebraic-Powered Search (APS) (*Appendix pending*) over Solvable Generated Spaces Grammars.
+The integer vector representation is optimal for CUDA implementations, providing acceleration benefits and faster grammar system processing through Algebraic-Powered Search (APS), following scene Stitching principal ([scene stitching]([https://arxiv.org/pdf/2002.02992)) (*Appendix_A pending*) over Solvable Generated Spaces Grammars.
 
 ### Gameplay and Model Interactions
 
@@ -125,6 +185,10 @@ The 1-1 level contains 4 feature layers and is represented as a token sequence:
 [0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1,1,1,1,2,3,4,0, ...]
 This sequence maps directly to the Universal Structures dataset, where each token corresponds to a specific structural element with its associated gameplay properties.
 
+The examples of ASG generated level are in Super_Mario_Brothers_Maps\final_levels, e.g.:
+
+![image info](ilustrations\gen_1-1_level.png)
+
 ### Next Steps
 
 1. Develop gameplay mechanics
@@ -135,9 +199,15 @@ This sequence maps directly to the Universal Structures dataset, where each toke
 ---
 
 ## future sections
+
 **Technical Architecture**
+
 **Experimental Design**
+
 **Implementation Details**
+
 **Results and Analysis**
+
 **Future Work**
+
 **References**
