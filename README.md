@@ -50,52 +50,94 @@ Our model is expected to:
 
 ## Literature Review
 
-### Mario Bros. generative Template
+### Mario Bros. Generative Framework
 
 #### Mario Bros. Game
+*[To be expanded with game mechanics and design principles]*
+
 #### Mario PCG Framework
-#### Grammars and graphs
-#### Scene stitching
-#### Cuda and Binary Algebra 
+*[To be expanded with existing procedural content generation approaches]*
+
+#### Grammars and Graphs
+*[To be expanded with formal grammar representations and graph-based level generation]*
+
+#### Scene Stitching
+*[To be expanded with level assembly and connectivity validation methods]*
+
+#### CUDA and Binary Algebra
+*[To be expanded with computational optimization techniques]*
 
 ---
 
 ### Models
-**"there is a budle of the following sections which has not necesarry integrated, onli those with $\dagger$ lable are surly use in the current version."**
 
-#### World Models $\dagger$
-*  [World Models](https://arxiv.org/pdf/1803.10122)
-*  [General agents need world models](https://arxiv.org/pdf/2506.01622)
+**Note: The following sections represent a collection of approaches not necessarily integrated. Only those marked with † are confirmed for use in the current version.**
 
-#### RL Agentic-Player $\dagger$
+#### World Models †
 
-#### PCGML for DDA and Reward balancing $\dagger$
+Our overall architecture represents a variation of the [World Model](https://arxiv.org/pdf/1803.10122) framework. Traditional World Models propose a unified model that learns how actions influence an environment while simultaneously learning optimal action selection, grouping interaction and world generation into a single task.
 
-#### Fi-2Pop and Map-Elites $\dagger$
-In terms of both Evolutionary algoritms and DL, divercity is crucial. While APS approach should have the propose of prefiltered Solvable for sure levels (*Appendix_A pending*), by using ML Surrugate Fi-2Pop (*reference pending*). But it may not admit all the posible soblable levels, , reducing variability in the data. Nevertheless, to compensate that intrisc lose we'll use  multidimentional Map-Elites (*reference pending*) over a grid that allawed us to guarantee some kinds of variability. Resulting in a valuable variablity vs Control trade-off.
+Instead, we propose a modular approach using two separate components: a Player/Agent-Player and a Levels-Generator. This separation maintains two key capabilities:
 
-However "for sure" the rules that assess if a level is solvable or not, are in dicussion. As far as we can explore at the moment it make very functional levels, but it might include and exclude valid levels, or both, but this assesmemnt is in progress too. (**Discusssion apendix pending**)
+1. **Player Substitution**: The ability to replace the Player-Agent with real human player interaction
+2. **Training Loop Preservation**: Incorporating Asymmetric Adversarial Network advantages as mutual training data generators
 
-The current design use an scene stitching variation, in it there is assumed that a level is solvable if every landing in the last tile has a valid path of landigs. This axioma allowed use to say that a level is solvable, if and only if, for all no-empty-landing tile there exist (almost one) previos tile that has a valid mario movement that connect them (jump or walk). Understanding each mario movement as a validation process, enstead a contruction process as the original scene stitching, allawed us to validate if a random level (o surrugate random level) is solvable, only reading the level from rigth to left just ones. It is no only computationaly eficient, it's also paraleizable in GPU by CUDA support for algebraic operations (*Appendix_A pending*).
+This approach sacrifices the Model Dream mechanism but enables better control within search spaces, focusing on agent learning optimization. Our hypothesis is that this separation may improve training speed and/or robustness compared to models trained under traditional conditions.
 
-Then we use Map-Elites (*Reference pending*) to guarantee some kinds of diversity over the solvable levels filtered. The General idea is to asignate a set of points in as much $F:level->[0,1]$ that discrebe any feature about the level. For example in scripts\Variety_Dominess.py we have some rudimentary functions that disperse very well the space of posible levels. And then choose somo acumulation points $\in [0,1]$. Using a ideal budle of functions we could make it a grid of a $\productoria F_n$ (the multidimencinal fiatures function space). Where each $F_n$ are well distributed over the rang, doing so each node in the grid is conciderable enogh diferent compared to an other member of the grid, but space-correlated in a vectorial way. Each acumulation point will save the best performance in it's rang, it could mean that some time a points in the grid has the same level assigned, but in an ideal {F_n} it is minimized.
+**Reference**: [General agents need world models](https://arxiv.org/pdf/2506.01622)
 
-In our context the performance function must discribe the the player-Agent performance in jump mechanics
+#### RL Agent-Player †
+*[To be expanded with reinforcement learning agent architecture and training methods]*
 
+#### PCGML for DDA and Reward Balancing †
 
-#### MOEs
-#### Dynamic Chunking and bit-networks
-Concidered them just because computacional eficiency always to rich levels of latency for real time generation in game and following the law of eficienty models:
+##### The Flow / The Zone
+*[To be expanded with flow state theory and optimal challenge-skill balance]*
 
-*  [BitNet: Scaling 1-bit Transformers for Large Language Models](https://arxiv.org/pdf/2310.11453)
-*  [Dynamic Chunking for End-to-End Hierarchical Sequence Modeling](https://arxiv.org/pdf/2507.07955)
+##### Dynamic Difficulty Adjustment (DDA)
+*[To be expanded with adaptive difficulty mechanisms]*
 
+##### Reward Systems
+*[To be expanded with reward structure and balancing methodologies]*
 
-#### Sparse autoencoders (Analizing)
+#### Fi-2Pop and Map-Elites †
 
-*  [Scaling Monosemanticity: Extracting Interpretable Features from Claude 3 Sonnet](https://transformer-circuits.pub/2024/scaling-monosemanticity?curius=4744)
+Diversity is crucial in both evolutionary algorithms and deep learning. Our Algebraic-Powered Search (APS) approach prefilters solvable levels using ML Surrogate Fi-2Pop methods (*Appendix A pending*). However, this may not capture all possible solvable levels, potentially reducing data variability.
 
+To compensate for this inherent limitation, we employ multidimensional Map-Elites over a grid system that guarantees specific types of variability, creating a valuable variability vs. control trade-off.
 
+**Solvability Assessment**: The rules determining level solvability remain under discussion. Current methods generate functional levels but may include false positives/negatives (*Discussion 1 appendix pending*).
+
+**Scene Stitching Variation**: Our current design assumes a level is solvable if every landing tile in the final position has a valid path of connected landings. This axiom allows us to determine solvability by verifying that for all non-empty landing tiles, there exists at least one previous tile with a valid Mario movement connection (jump or walk).
+
+By treating each Mario movement as a validation process rather than a construction process, we can validate random levels by reading from right to left in a single pass. This approach is computationally efficient and parallelizable on GPU through CUDA-supported algebraic operations (*Appendix A pending*).
+
+**Map-Elites Implementation**: We use Map-Elites to guarantee diversity among filtered solvable levels. The approach assigns points across feature functions F: level → [0,1] that describe level characteristics. For example, `scripts\Variety_Domains.py` contains functions that effectively disperse the space of possible levels.
+
+Accumulation points are selected within [0,1], creating a grid across the multidimensional feature function space ∏F_n. Each grid node represents sufficiently different levels while maintaining spatial correlation. Each accumulation point stores the best-performing level in its range, optimizing for both diversity and quality.
+
+The performance function must describe both player-agent jump mechanics performance and associated loss functions, enabling model training with consistent general objectives. This creates an adversarial network where both components optimize the same objective through different metrics and environmental influences.
+
+Current feature functions, evaluations, and loss functions remain under investigation (*Discussion 2 appendix pending*).
+
+#### Mixture of Experts (MOEs)
+*[To be expanded with multi-expert model architectures]*
+
+#### Dynamic Chunking and Bit-Networks
+
+These approaches are considered for computational efficiency to achieve real-time generation latency in gameplay, following efficiency model principles:
+
+**References**:
+- [BitNet: Scaling 1-bit Transformers for Large Language Models](https://arxiv.org/pdf/2310.11453)
+- [Dynamic Chunking for End-to-End Hierarchical Sequence Modeling](https://arxiv.org/pdf/2507.07955)
+
+#### Sparse Autoencoders (Under Analysis)
+
+**Reference**: [Scaling Monosemanticity: Extracting Interpretable Features from Claude 3 Sonnet](https://transformer-circuits.pub/2024/scaling-monosemanticity?curius=4744)
+
+#### Fine-tuning by Low Rank Adaptations (LoRA)
+
+Considered as an option for exploring local optima, such as user-level fine-tuning applications.
 ---
 
 
