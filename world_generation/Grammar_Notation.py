@@ -16,9 +16,9 @@ References:
 """
 #import sys
 # sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
+from world_generation import ws
 import random
 import numpy as np
-import scripts.Word_Stitching as ws
 import re
 
 """## Samael  Search Aceleration via Machine Learning «Ceguera de Dios»
@@ -84,7 +84,7 @@ class Word:
 #defining relations between words as an adjacency matrix
 class Graph:
     def __init__(self, ExampleLevel, WordsList = []):
-        self.Sequence = ExampleLevel
+        self.Sequence = ExampleLevel.tolist()
         self.V = list(set(self.Sequence))
         temp = np.empty((len(self.V),0))
         self.E = [list(x) for x in temp]
@@ -119,7 +119,7 @@ class Graph:
     # Print the graph
     def print_agraph(self):
         for i in self.V:
-            print("Vertex " + i + ":", end="")
+            print("Vertex " + str(i) + ":", end="")
             print(self.E[self.V.index(i)])
             
     def Vertixes_of(self, v):
@@ -171,7 +171,7 @@ class Grammar:
                 if self.__Graph.iloc[x,y] == 1:
                     Simple_Words = Simple_Words.union({key + k})
                             
-        return #Simple_Words ##not yet implemented
+        return #Simple_Words ##not implemented
     
     #receives a list of words and gives all the possible sublists for the especific Grammar
     def Reduced_Blacklist(self, BlackList = ["FVBREDPAWSG","EEE"]): 
@@ -222,7 +222,7 @@ class Grammar:
             #from_keys with the level not being feasible
             Feasible_Level = False
             while not(Feasible_Level):
-                #if not given a premade from_key, select at random
+                #if from_key is not given, it is selected randomly
                 if  from_key == '':
                     n = int(len(self.__Graph.V)*random.random())
                     New_Level = Word([self.__Graph.V[n]])

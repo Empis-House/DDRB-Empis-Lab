@@ -10,9 +10,7 @@ Check List:
 # import sys
 # sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
 
-import scripts.Grammar_Notation as gn
-import scripts.Word_Stitching as ws
-import scripts.Performance_Evaluation as pe
+from world_generation import gn,ws
 import pandas as pd
 import numpy as np
 from itertools import product
@@ -132,35 +130,37 @@ class Map_Elite:
             return
     
     def Structure(self, row):
-        return "".join(row[2:])
+        return "".join(row)
 
     def Key_substraction(self, x, df):
         "-------------X"
         "---------XXXXX"
         "--------------"
         "-------XXXXXXX"
-        if len(df[df["Structures"] ==  x]["token"])==0:
-            return "?"
-        else:
-            return np.array(df[df["Structures"] ==  x]["token"])[0]
+        if len(df[df["Structures"] ==  x]) == 0:
+            raise IndexError("Not tokenized Structure")
+        return df[df["Structures"] ==  x]["token"]
 
     def Extract_Level_String(self, examples_codes,df):
+        all_temporals = []
+
         for example_code in examples_codes:
-            Temporal = pd.DataFrame(columns=["Structures","token"] + ["{}".format(i) for i in range(13)])
+            columns_data = {}  # Collect column data here first
             with open(r"Super_Mario_Brothers_Maps/Processed/mario-{}.txt".format(example_code)) as infile:
-                i = 0
-                for line in infile: 
-                    Temporal["{}".format(i)] = list(line.split()[0])
-                    i+=1
-            Level = pd.DataFrame(columns=["Structures","token"] + ["{}".format(i) for i in range(13)])
-            Level = pd.concat([Level,Temporal], axis=0)
-                
+                for i, line in enumerate(infile):
+                    columns_data[str(i)] = list(line.split()[0])
+
+            # Build the DataFrame all at once — no fragmentation
+            Temporal = pd.DataFrame(columns_data)
+            all_temporals.append(Temporal)
+
+        Level = pd.concat(all_temporals, axis=0, ignore_index=True)
+
         Level["Structures"] = Level.apply(self.Structure, axis=1)
+        Level["token"] = [self.Key_substraction(s, df=df) for s in Level["Structures"]]
         
-        for i in range(len(Level["Structures"])):
-            Level["token"][i]= self.Key_substraction(Level["Structures"][i], df=df)
-            
-        return list(Level["token"])
+        return np.concatenate([s.values for s in Level["token"]])
+
     
     
     def Generate_Mapping(self,example_code, Knowledge, df, Level_Len, module=None, batch_size=1, epochs=256, seed=None,Game_Mode = 0):

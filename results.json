@@ -1,0 +1,67 @@
+{
+  "episodes": 20,
+  "avg_reward": 2.148910395833324,
+  "avg_steps": 480.5,
+  "avg_distance_tiles": 35.3080197916667,
+  "avg_completion": 0.2220630175576522,
+  "avg_score": 164.55,
+  "avg_coins": 0.1,
+  "avg_jumps": 20.45,
+  "avg_stomped": 0.6,
+  "last_episode": {
+    "total_reward": -1.0653901388888887,
+    "steps": 91,
+    "metrics": {
+      "steps": 91,
+      "time_alive": 1.5166666666666662,
+      "distance_px": 100.08788888888888,
+      "distance_tiles": 6.255493055555555,
+      "score": 3,
+      "coins": 0,
+      "jumps": 3,
+      "stomped": 0,
+      "deaths": 1,
+      "falls": 0,
+      "blocks_hit": 3,
+      "blocks_broken": 0,
+      "completion": 0.03934272361984626,
+      "finished": false,
+      "reason": "enemy_collision",
+      "max_x": 100.08788888888888
+    },
+    "info": {
+      "metrics": {
+        "steps": 91,
+        "time_alive": 1.5166666666666662,
+        "distance_px": 100.08788888888888,
+        "distance_tiles": 6.255493055555555,
+        "score": 3,
+        "coins": 0,
+        "jumps": 3,
+        "stomped": 0,
+        "deaths": 1,
+        "falls": 0,
+        "blocks_hit": 3,
+        "blocks_broken": 0,
+        "completion": 0.03934272361984626,
+        "finished": false,
+        "reason": "enemy_collision",
+        "max_x": 100.08788888888888
+      },
+      "alive_enemies": 17,
+      "camera_x": 0.0,
+      "player_rect": [
+        100.08788888888888,
+        192.499,
+        12.0,
+        15.5
+      ],
+      "level_size": [
+        160,
+        14
+      ],
+      "done_reason": "enemy_collision",
+      "last_action": 0
+    }
+  }
+}

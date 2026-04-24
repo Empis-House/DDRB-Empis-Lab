@@ -6,7 +6,10 @@ Check List:
 @author: Juan J. Rueda M.
 """
 import pandas as pd
-import scripts.Grammar_Notation as gn
+from world_generation import gn
+
+
+## Mock version 
 
 def Performance(level,df):
     Count=0
@@ -14,7 +17,7 @@ def Performance(level,df):
         try:
             value = list(df.loc[df["token"].astype(int) == Key,"Landings"])[0]
             if value == 0:
-                Count += 5/3 # The way generation is now configured guarantees a greater ratio of 3 supports for every 5 landing pieces.
+                Count += 5/3 
         except Exception as e:
             print(Key, type(Key),"      ", e)
     return Count/len(level)

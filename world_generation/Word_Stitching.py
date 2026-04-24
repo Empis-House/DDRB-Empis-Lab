@@ -19,15 +19,16 @@ Max_Length = 4 #max length of player jump
 Band_Height = 14 #size of level
 
 
-#check if there is a bit in position k in number n
-@njit(target_backend='cuda') 
+#check if there is a 1 in position k of the number n
+# 4 = 00100000000000 so p(n=4,k=2) = 1 and p(n=4,k!=2) = 0
+#@njit(target_backend='cuda') 
 def Punctual_Binary_Prop(n,k):
     n_ = n>>k 
     #returns only position
     return (n_ % 2**(k+1))%2
 
 # slice bit array sections
-@njit(target_backend='cuda')
+#@njit(target_backend='cuda')
 def Range_Binary_Prop(n,a,b):
     #read structures
     a = max(0,a)

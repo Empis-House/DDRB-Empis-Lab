@@ -10,10 +10,6 @@ Check List:
 # import sys
 # sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
 
-import scripts.Grammar_Notation as gn
-import scripts.Word_Stitching as ws
-import scripts.Performance_Evaluation as pe
-import scripts.Map_Grammars_Elite as me
 import pandas as pd
 import time
 import numpy as np
