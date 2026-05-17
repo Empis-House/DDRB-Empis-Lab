@@ -16,10 +16,13 @@ References:
 """
 #import sys
 # sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
-from world_generation import ws
 import random
 import numpy as np
 import re
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 """## Samael  Search Aceleration via Machine Learning «Ceguera de Dios»
 ## https://www.youtube.com/watch?v=FHdlXe1bSe4
@@ -216,6 +219,9 @@ class Grammar:
         random.seed(seed)
         #we don't talk about this part
         module = max(10,module)
+
+        from Word_Stitching import Jumping_Fiasible_Word
+
         if N<= 0:
             return Word([])
         if N<=module:
@@ -236,7 +242,7 @@ class Grammar:
                     return
                 
                 i=0
-                while not(ws.Jumping_Fiasible_Word(New_Level._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
+                while not(Jumping_Fiasible_Word(New_Level._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
                     #print("no fiasible level")
                     if from_key == '':
                         n = int(len(self.__Graph.V)*random.random())
@@ -260,12 +266,12 @@ class Grammar:
                         n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
                         new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
                     New_Level = New_Level + new_Word
-                Feasible_Level = ws.Jumping_Fiasible_Word(New_Level._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)
+                Feasible_Level = Jumping_Fiasible_Word(New_Level._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)
             return New_Level
         else:
             for i in range(N//module):
                 Level_Piece = self.N_Level_Generator(module,New_Level.CloseKey(),module=max(10,int(module/2)))
-                while not(ws.Jumping_Fiasible_Word(Level_Piece._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
+                while not(Jumping_Fiasible_Word(Level_Piece._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
                     Level_Piece = self.N_Level_Generator(module,New_Level.CloseKey(),module=max(10,int(module/2)))
                 New_Level = New_Level + Level_Piece
             New_Level = New_Level + self.N_Level_Generator(N%module,New_Level.CloseKey(),module=module)

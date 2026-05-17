@@ -6,7 +6,10 @@ Check List:
 @author: Juan J. Rueda M.
 """
 import pandas as pd
-from world_generation import gn
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 
 ## Mock version 
@@ -25,7 +28,8 @@ def Performance(level,df):
 Levels_Performance = pd.DataFrame(columns=["Level_String","Added_Wordlist", "Performance"])
 
 def Add_Level_To_Performance(level, WordsList = [], Levels_Performance = Levels_Performance):
-    G_ = gn.Grammar(level, WordsList)
+    from Grammar_Notation import Grammar
+    G_ = Grammar(level, WordsList)
     
     level_G_ = G_.N_Level_Generator(100).__repr__()
     new_row = [level, WordsList, Performance(level_G_)]

@@ -28,8 +28,8 @@ def calculate_slope(Level,df):
     return 1 / (1 + np.exp(-slope)) # mapping it on (0,1) 
 
 
-# Variety Dominess
-def Landings_Score(Level,df):
+# Variety Domains
+def landings_score(Level,df):
     if len(Level)==0:
         print(Level)
         return
@@ -49,7 +49,7 @@ def Landings_Score(Level,df):
         
     return Count/(Max * len(Level))
 
-def Colliders_Score(Level,df):
+def colliders_score(Level,df):
     if len(Level)==0:
         print(Level)
         return
@@ -68,3 +68,7 @@ def Colliders_Score(Level,df):
         return
         
     return Count/(Max * len(Level))
+
+variety_domains_json = {"landings": landings_score,
+                        "slope": calculate_slope,
+                        "colliders": colliders_score}
