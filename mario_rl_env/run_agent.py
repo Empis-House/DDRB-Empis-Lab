@@ -23,10 +23,12 @@ import argparse
 import sys
 import os
 import time
+from typing import Callable, Union
 
 sys.path.insert(0, os.path.dirname(__file__))
 
 import numpy as np
+import pandas as pd
 
 
 # ── Built-in agents ───────────────────────────────────────────────────────────
@@ -73,7 +75,10 @@ class RightJumpAgent:
 
             # indices 8 .. 8+H*W-1 are the tile window;
             # goomba features start at 8 + OBS_TILES_H*OBS_TILES_W
-            from constants import OBS_TILES_H, OBS_TILES_W
+            try:
+                from .constants import OBS_TILES_H, OBS_TILES_W
+            except ImportError:
+                from constants import OBS_TILES_H, OBS_TILES_W
             tile_start = 8
             tile_end   = tile_start + OBS_TILES_H * OBS_TILES_W
             goomba_start = tile_end
@@ -105,8 +110,9 @@ class RightJumpAgent:
 # ── Runner ────────────────────────────────────────────────────────────────────
 
 def run(
-    map_path: str,
+    map_path: Union[str, pd.DataFrame, Callable[[], Union[str, pd.DataFrame]]],
     agent_name: str = "random",
+    batch_size: int = 1,
     n_episodes: int = 10,
     obs_mode: str = "features",
     render: bool = False,
@@ -117,6 +123,9 @@ def run(
     """
     Run *n_episodes* of the specified agent and return summary stats.
 
+    If `map_path` is a callable, it will be invoked every `batch_size`
+    episodes to obtain a fresh generated level from a pool manager.
+
     Returns
     -------
     dict from MetricsTracker.summary()
@@ -124,9 +133,15 @@ def run(
     from env import MarioEnv, N_ACTIONS, ACTION_MAP
     from metrics import MetricsTracker
 
+    if batch_size <= 0:
+        batch_size = 1
+
+    level_provider = map_path if callable(map_path) else None
+    initial_map = map_path() if callable(map_path) else map_path
+
     render_mode = "human" if render else "rgb_array" if obs_mode == "rgb" else None
     env = MarioEnv(
-        map_path=map_path,
+        map_path=initial_map,
         obs_mode=obs_mode,
         render_mode=render_mode,
         fps=60 if render else 10000,
@@ -147,7 +162,11 @@ def run(
     t_start = time.time()
 
     for ep in range(n_episodes):
-        obs, _ = env.reset()
+        if ep > 0 and level_provider is not None and ep % batch_size == 0:
+            obs, _ = env.reset(map_path=level_provider())
+        else:
+            obs, _ = env.reset()
+
         tracker.new_episode()
         done = trunc = False
 
@@ -243,6 +262,8 @@ def main() -> None:
                         help="Agent to use (default: right_jump)")
     parser.add_argument("--episodes", type=int, default=20,
                         help="Number of episodes to run (default: 20)")
+    parser.add_argument("--batch", type=int, default=1,
+                        help="Number of episodes per generated level batch (default: 1)")
     parser.add_argument("--obs",      default="features",
                         choices=["rgb", "tiles", "features"],
                         help="Observation mode (default: features)")
@@ -269,6 +290,7 @@ def main() -> None:
     run(
         map_path=args.map,
         agent_name=args.agent,
+        batch_size=args.batch,
         n_episodes=args.episodes,
         obs_mode=args.obs,
         render=args.render,

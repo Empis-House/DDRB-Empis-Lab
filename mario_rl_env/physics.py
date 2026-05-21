@@ -14,14 +14,24 @@ from __future__ import annotations
 import math
 from typing import Tuple, Optional
 
-from constants import (
-    TILE_SIZE,
-    GRAVITY, MAX_FALL_SPEED,
-    MARIO_WALK_SPEED, MARIO_RUN_SPEED, MARIO_JUMP_VY,
-    GOOMBA_SPEED,
-)
-from tilemap import TileMap, TileType
-from entities import Mario, Goomba, MarioState, GoombaState
+try:
+    from .constants import (
+        TILE_SIZE,
+        GRAVITY, MAX_FALL_SPEED,
+        MARIO_WALK_SPEED, MARIO_RUN_SPEED, MARIO_JUMP_VY,
+        GOOMBA_SPEED,
+    )
+    from .tilemap import TileMap, TileType
+    from .entities import Mario, Goomba, MarioState, GoombaState
+except ImportError:
+    from constants import (
+        TILE_SIZE,
+        GRAVITY, MAX_FALL_SPEED,
+        MARIO_WALK_SPEED, MARIO_RUN_SPEED, MARIO_JUMP_VY,
+        GOOMBA_SPEED,
+    )
+    from tilemap import TileMap, TileType
+    from entities import Mario, Goomba, MarioState, GoombaState
 
 
 # ── Rect helpers ──────────────────────────────────────────────────────────────

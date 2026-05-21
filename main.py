@@ -8,35 +8,77 @@ Check List:
 """
 """"""
 
-from world_generation import *
-from world_generation.Variety_Dominess import calculate_slope, Landings_Score, Colliders_Score
+import json
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
+
+from mario_rl_env.run_agent import run as agent_run
 import pandas as pd
-import time
-import numpy as np
 import itertools
-import numpy as np
-from scipy.stats import linregress
-
-def transform_to_cartesian(grid_points):
-    cartesian_list = list(itertools.product(*grid_points))
-    
-    return cartesian_list
 
 
-example_code = ['1-1']
-Level_Len = 80
-module = Level_Len # Temp: module != Level_Len could generate buged but solvable levels
-Grid_points =[[0,0.5],[0,1]]
-alphas=[0,0.1,1] # These are the system acumulation points on the interval [0,1]
-#read structures
-df = pd.read_csv(r'Super_Mario_Brothers_Maps/structures/Universal_Structures.txt') #.format(example_code))
+API_BASE_URL = "http://127.0.0.1:8000"
 
-#pass info to numpy
-Columns = df.columns.to_numpy()
-dfnp = np.transpose(df.to_numpy())
-Knowledge = dfnp[3:]
 
-cartesian_list = transform_to_cartesian(Grid_points)
-Map_Performance = me.Map_Elite(pe.Performance,alphas=alphas, Variety_Dominess = [Landings_Score,calculate_slope], Grid_points =Grid_points)
-Map_Performance.Generate_Mapping(example_code=example_code, Knowledge=Knowledge, df=df, Level_Len=Level_Len,module=module,batch_size=1,epochs=10)
-Map_Performance.Plot_Coordinate( cartesian_list=cartesian_list, level_curves=[1], Knowledge=Knowledge,df=df) # Use "levels_name" to save plots
+def api_post(path, payload):
+    url = f"{API_BASE_URL}{path}"
+    body = json.dumps(payload).encode("utf-8")
+    request = Request(url, data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urlopen(request) as response:
+            return json.load(response)
+    except HTTPError as exc:
+        message = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"API request failed: {exc.code} {exc.reason} {message}")
+    except URLError as exc:
+        raise RuntimeError(f"API connection failed: {exc.reason}")
+
+
+example_codes = ["1-1"]
+level_len = 40
+module = level_len  # Temp: module != Level_Len could generate buged but solvable levels
+grid_points = [[0, 0.5], [0, 1]]
+alphas = [0, 0.1, 1]  # These are the system acumulation points on the interval [0,1]
+
+
+def main() -> None:
+    create_payload = {
+        "function": "Performance",
+        "alphas": alphas,
+        "variety_domains": ["calculate_slope", "colliders_score"],
+        "grid_points": grid_points,
+    }
+    instance = api_post("/instances", create_payload)
+    instance_id = instance["instance_id"]
+
+    generate_payload = {
+        "example_code": example_codes,
+        "Level_Len": level_len,
+        "module": module,
+        "batch_size": 5,
+        "epochs": 10,
+    }
+    api_post(f"/instances/{instance_id}/generate_mapping", generate_payload)
+
+    def agent_runner():
+        response = api_post(
+            f"/instances/{instance_id}/pool_manager",
+            {
+                "agent_hash": "12345",
+                "request": generate_payload,
+            },
+        )
+        return pd.DataFrame(response["tilemap"])
+
+    agent_run(
+        map_path=agent_runner,
+        render=True,
+        obs_mode="features",
+        n_episodes=20,
+        batch_size=4,
+        agent_name="right_jump",
+    )
+
+
+if __name__ == "__main__":
+    main()

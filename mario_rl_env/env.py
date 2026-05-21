@@ -43,14 +43,24 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 
-from constants import (
-    SCREEN_H, SCREEN_W, TILE_SIZE, FPS,
-    OBS_TILES_W, OBS_TILES_H,
-    MAX_STEPS_PER_EPISODE,
-)
-from tilemap import TileMap, TileType, parse_tilemap
-from game_state import GameState
-from renderer import Renderer
+try:
+    from .constants import (
+        SCREEN_H, SCREEN_W, TILE_SIZE, FPS,
+        OBS_TILES_W, OBS_TILES_H,
+        MAX_STEPS_PER_EPISODE,
+    )
+    from .tilemap import TileMap, TileType, parse_tilemap
+    from .game_state import GameState
+    from .renderer import Renderer
+except ImportError:
+    from constants import (
+        SCREEN_H, SCREEN_W, TILE_SIZE, FPS,
+        OBS_TILES_W, OBS_TILES_H,
+        MAX_STEPS_PER_EPISODE,
+    )
+    from tilemap import TileMap, TileType, parse_tilemap
+    from game_state import GameState
+    from renderer import Renderer
 
 
 # ── Action definitions ────────────────────────────────────────────────────────
@@ -111,11 +121,9 @@ class MarioEnv(gym.Env):
         self.fps = fps
 
         # Load tilemap once; GameState clones it per episode
-        self._tilemap_source: TileMap = parse_tilemap(map_path)
-        self._gs: GameState = GameState(tilemap_source=self._tilemap_source)
+        self._load_tilemap(map_path)
 
         # Renderer (lazy init)
-        headless = (render_mode != "human")
         self._renderer: Optional[Renderer] = None
         if render_mode in ("human", "rgb_array"):
             self._renderer = Renderer(headless=(render_mode == "rgb_array"))
@@ -142,6 +150,10 @@ class MarioEnv(gym.Env):
                 dtype=np.float32,
             )
 
+    def _load_tilemap(self, map_path: Any) -> None:
+        self._tilemap_source = parse_tilemap(map_path)
+        self._gs = GameState(tilemap_source=self._tilemap_source)
+
     # ── Gymnasium API ─────────────────────────────────────────────────────────
 
     def reset(
@@ -149,7 +161,10 @@ class MarioEnv(gym.Env):
         *,
         seed: Optional[int] = None,
         options: Optional[dict] = None,
+        map_path: Optional[Any] = None,
     ) -> Tuple[np.ndarray, dict]:
+        if map_path is not None:
+            self._load_tilemap(map_path)
         super().reset(seed=seed)
         self._gs.reset()
         obs = self._make_obs()
@@ -260,9 +275,14 @@ class MarioEnv(gym.Env):
           last 20:  up to 5 nearest goombas
                     per goomba: [exists, dx/screen_w, dy/screen_h, goomba_vx_dir]
         """
-        from constants import (MARIO_RUN_SPEED, MAX_FALL_SPEED,
-                                SCREEN_W, SCREEN_H)
-        from entities import MarioState
+        try:
+            from .constants import (MARIO_RUN_SPEED, MAX_FALL_SPEED,
+                                    SCREEN_W, SCREEN_H)
+            from .entities import MarioState
+        except ImportError:
+            from constants import (MARIO_RUN_SPEED, MAX_FALL_SPEED,
+                                   SCREEN_W, SCREEN_H)
+            from entities import MarioState
 
         gs = self._gs
         mario = gs.mario

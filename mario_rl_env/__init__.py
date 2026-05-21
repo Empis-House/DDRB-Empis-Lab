@@ -21,9 +21,12 @@ from .env import MarioEnv, ACTION_MAP, N_ACTIONS
 from .tilemap import TileMap, TileType, parse_tilemap
 from .game_state import GameState
 from .metrics import MetricsTracker
+from .ml_agents import AGENT_MANAGER, MLAgentManager, RandomAgent, TabularQAgent, RLAgent, run_training_loop, evaluate_agent
 
 __all__ = [
     "MarioEnv", "ACTION_MAP", "N_ACTIONS",
     "TileMap", "TileType", "parse_tilemap",
     "GameState", "MetricsTracker",
+    "AGENT_MANAGER", "MLAgentManager", "RandomAgent", "TabularQAgent",
+    "RLAgent", "run_training_loop", "evaluate_agent",
 ]

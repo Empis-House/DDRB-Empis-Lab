@@ -25,15 +25,26 @@ try:
 except ImportError:
     _PYGAME_AVAILABLE = False
 
-from constants import (
-    TILE_SIZE, SCREEN_W, SCREEN_H, SCREEN_TILES_W, SCREEN_TILES_H,
-    COL_SKY, COL_GROUND, COL_BRICK, COL_QUESTION, COL_QUESTION_USED,
-    COL_PIPE_DARK, COL_PIPE_LITE, COL_MARIO, COL_MARIO_BIG,
-    COL_GOOMBA, COL_GOOMBA_DEAD, COL_HUD_BG, COL_WHITE, COL_YELLOW, COL_RED,
-)
-from tilemap import TileMap, TileType
-from entities import Mario, Goomba, MarioState, GoombaState
-from game_state import GameState
+try:
+    from .constants import (
+        TILE_SIZE, SCREEN_W, SCREEN_H, SCREEN_TILES_W, SCREEN_TILES_H,
+        COL_SKY, COL_GROUND, COL_BRICK, COL_QUESTION, COL_QUESTION_USED,
+        COL_PIPE_DARK, COL_PIPE_LITE, COL_MARIO, COL_MARIO_BIG,
+        COL_GOOMBA, COL_GOOMBA_DEAD, COL_HUD_BG, COL_WHITE, COL_YELLOW, COL_RED,
+    )
+    from .tilemap import TileMap, TileType
+    from .entities import Mario, Goomba, MarioState, GoombaState
+    from .game_state import GameState
+except ImportError:
+    from constants import (
+        TILE_SIZE, SCREEN_W, SCREEN_H, SCREEN_TILES_W, SCREEN_TILES_H,
+        COL_SKY, COL_GROUND, COL_BRICK, COL_QUESTION, COL_QUESTION_USED,
+        COL_PIPE_DARK, COL_PIPE_LITE, COL_MARIO, COL_MARIO_BIG,
+        COL_GOOMBA, COL_GOOMBA_DEAD, COL_HUD_BG, COL_WHITE, COL_YELLOW, COL_RED,
+    )
+    from tilemap import TileMap, TileType
+    from entities import Mario, Goomba, MarioState, GoombaState
+    from game_state import GameState
 
 
 # ── Tile colour lookup ────────────────────────────────────────────────────────

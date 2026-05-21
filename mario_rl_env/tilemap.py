@@ -17,8 +17,9 @@ Tile legend (characters in the .txt file):
 from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import IntEnum
-from typing import List, Tuple, Set
+from typing import List, Tuple, Set, Union
 import numpy as np
+import pandas as pd
 
 
 class TileType(IntEnum):
@@ -74,12 +75,18 @@ class TileMap:
 
     @property
     def pixel_width(self) -> int:
-        from constants import TILE_SIZE
+        try:
+            from .constants import TILE_SIZE
+        except ImportError:
+            from constants import TILE_SIZE
         return self.width * TILE_SIZE
 
     @property
     def pixel_height(self) -> int:
-        from constants import TILE_SIZE
+        try:
+            from .constants import TILE_SIZE
+        except ImportError:
+            from constants import TILE_SIZE
         return self.height * TILE_SIZE
 
     def clone(self) -> "TileMap":
@@ -127,36 +134,60 @@ class TileMap:
         return False
 
 
-def parse_tilemap(filepath: str) -> TileMap:
+def parse_tilemap(source: Union[str, pd.DataFrame, TileMap]) -> TileMap:
     """
-    Load a comma-separated .txt tile map from *filepath*.
+    Load a tile map from one of:
+      - filepath (str): comma-separated .txt file path
+      - pandas.DataFrame: grid of tile characters (rows × cols)
+      - TileMap: returned as-is (clone)
 
-    Each row is one line; each cell is separated by a comma.
-    Rows need not all be the same length – shorter rows are padded with AIR.
+    Backward-compatible: when passed a string path this behaves like before.
     """
-    with open(filepath, "r") as fh:
-        raw_lines = fh.readlines()
+    # If already a TileMap, return it directly
+    if isinstance(source, TileMap):
+        return source
 
     rows: List[List[int]] = []
     enemy_spawns: List[Tuple[int, int]] = []
 
-    for row_idx, line in enumerate(raw_lines):
-        line = line.strip()
-        if not line:
-            continue
-        cells = line.split(",")
-        row_tiles: List[int] = []
-        for col_idx, cell in enumerate(cells):
-            cell = cell.strip()
-            if cell == "E":
-                enemy_spawns.append((col_idx, row_idx))
-                row_tiles.append(int(TileType.AIR))
-            else:
-                row_tiles.append(int(CHAR_TO_TILE.get(cell, TileType.AIR)))
-        rows.append(row_tiles)
+    # If a DataFrame, iterate its rows
+    if isinstance(source, pd.DataFrame):
+        df: pd.DataFrame = source
+        for row_idx in range(df.shape[0]):
+            cells = [str(x).strip() for x in df.iloc[row_idx].tolist()]
+            if not any(cells):
+                continue
+            row_tiles: List[int] = []
+            for col_idx, cell in enumerate(cells):
+                if cell == "E":
+                    enemy_spawns.append((col_idx, row_idx))
+                    row_tiles.append(int(TileType.AIR))
+                else:
+                    row_tiles.append(int(CHAR_TO_TILE.get(cell, TileType.AIR)))
+            rows.append(row_tiles)
+
+    else:
+        # Assume a file path-like string
+        filepath = str(source)
+        with open(filepath, "r") as fh:
+            raw_lines = fh.readlines()
+        for row_idx, line in enumerate(raw_lines):
+            line = line.strip()
+            if not line:
+                continue
+            cells = line.split(",")
+            row_tiles: List[int] = []
+            for col_idx, cell in enumerate(cells):
+                cell = cell.strip()
+                if cell == "E":
+                    enemy_spawns.append((col_idx, row_idx))
+                    row_tiles.append(int(TileType.AIR))
+                else:
+                    row_tiles.append(int(CHAR_TO_TILE.get(cell, TileType.AIR)))
+            rows.append(row_tiles)
 
     if not rows:
-        raise ValueError(f"Empty tilemap: {filepath}")
+        raise ValueError(f"Empty tilemap: {source}")
 
     max_cols = max(len(r) for r in rows)
     for r in rows:

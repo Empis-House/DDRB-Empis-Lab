@@ -44,12 +44,18 @@ class Mario:
 
     @property
     def w(self) -> int:
-        from constants import MARIO_W
+        try:
+            from .constants import MARIO_W
+        except ImportError:
+            from constants import MARIO_W
         return MARIO_W
 
     @property
     def h(self) -> int:
-        from constants import MARIO_H, MARIO_H_BIG
+        try:
+            from .constants import MARIO_H, MARIO_H_BIG
+        except ImportError:
+            from constants import MARIO_H, MARIO_H_BIG
         return MARIO_H_BIG if self.state == MarioState.BIG else MARIO_H
 
     @property
@@ -83,12 +89,18 @@ class Goomba:
 
     @property
     def w(self) -> int:
-        from constants import GOOMBA_W
+        try:
+            from .constants import GOOMBA_W
+        except ImportError:
+            from constants import GOOMBA_W
         return GOOMBA_W
 
     @property
     def h(self) -> int:
-        from constants import GOOMBA_H
+        try:
+            from .constants import GOOMBA_H
+        except ImportError:
+            from constants import GOOMBA_H
         return GOOMBA_H
 
     @property

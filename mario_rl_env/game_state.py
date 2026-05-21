@@ -11,17 +11,30 @@ import copy
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
-from constants import (
-    TILE_SIZE, GOOMBA_SPEED,
-    MARIO_WALK_SPEED, BOUNCE_VY,
-    REWARD_PER_TILE_RIGHT, REWARD_PER_TILE_LEFT,
-    REWARD_KILL_ENEMY, REWARD_COIN, REWARD_DEATH,
-    REWARD_WIN, REWARD_TIME_STEP,
-    MAX_STEPS_PER_EPISODE,
-)
-from tilemap import TileMap, parse_tilemap
-from entities import Mario, Goomba, MarioState, GoombaState
-from physics import move_mario, move_goomba, check_mario_goomba
+try:
+    from .constants import (
+        TILE_SIZE, GOOMBA_SPEED,
+        MARIO_WALK_SPEED, BOUNCE_VY,
+        REWARD_PER_TILE_RIGHT, REWARD_PER_TILE_LEFT,
+        REWARD_KILL_ENEMY, REWARD_COIN, REWARD_DEATH,
+        REWARD_WIN, REWARD_TIME_STEP,
+        MAX_STEPS_PER_EPISODE,
+    )
+    from .tilemap import TileMap, parse_tilemap
+    from .entities import Mario, Goomba, MarioState, GoombaState
+    from .physics import move_mario, move_goomba, check_mario_goomba
+except ImportError:
+    from constants import (
+        TILE_SIZE, GOOMBA_SPEED,
+        MARIO_WALK_SPEED, BOUNCE_VY,
+        REWARD_PER_TILE_RIGHT, REWARD_PER_TILE_LEFT,
+        REWARD_KILL_ENEMY, REWARD_COIN, REWARD_DEATH,
+        REWARD_WIN, REWARD_TIME_STEP,
+        MAX_STEPS_PER_EPISODE,
+    )
+    from tilemap import TileMap, parse_tilemap
+    from entities import Mario, Goomba, MarioState, GoombaState
+    from physics import move_mario, move_goomba, check_mario_goomba
 
 
 @dataclass

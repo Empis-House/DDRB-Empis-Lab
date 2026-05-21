@@ -10,45 +10,61 @@ Check List:
 # import sys
 # sys.path.insert(1,r"C:\Users\PC\Documents\GitHub\EMPIS LAB\DDRB-Empis-Lab\Super_Mario_Brothers_Maps")
 
-from world_generation import gn,ws
+import random
+import threading
 import pandas as pd
 import numpy as np
 from itertools import product
 import time
 import numpy as np
 from scipy.spatial import distance
+import sys
+import os
 
+from ml_profiler import profile
+
+sys.path.insert(0, os.path.dirname(__file__))
 
 #CReate Map Elite Class
 #Good explanation on https://arxiv.org/abs/2205.05834
 class Map_Elite:
     all = []
     
-    def __init__(self, function, alphas =[0], Variety_Dominess = [], Grid_points =[]):
+    def __init__(self, function, alphas =[0], Variety_Domains = [], Grid_points =[]):
         # function must acept a Level as input
         # fuction must have Image the real interval [0,1]
         # The Filtter will capting the optimal value (min)
         self.__N = len(alphas)
         self.__f = function
         self.__alphas = alphas
-        self.__Variety_Dominess = Variety_Dominess
+        self.__Variety_Domains = Variety_Domains
         
         self.__Opt_Values = None
         self.__Optimal_strings = None
         
         self.__Grid_points = Grid_points
         
-        if not(self.__Variety_Dominess):
+        if not(self.__Variety_Domains):
             self.__Opt_Values = np.ones(self.__N)
             self.__Optimal_strings = [""]*self.__N
             
-        elif len(self.__Variety_Dominess) == len(self.__Grid_points):
+        elif len(self.__Variety_Domains) == len(self.__Grid_points):
             self.__Opt_Values, self.__Optimal_strings = self.transform_lists_to_dict(self.__Grid_points,self.__N)
             
         else:
             print("The Variety Grid failse, the Map have set as Default")
             self.__Opt_Values = np.ones(self.__N)
             self.__Optimal_strings = [""]*self.__N
+
+        # knowledge base
+        self.df = pd.read_csv(r'Super_Mario_Brothers_Maps/structures/Universal_Structures.txt')
+        dfnp = np.transpose(self.df.to_numpy())
+        self.Knowledge = dfnp[3:]
+
+        # Data Manager
+        self.__manager_memory    = {}         # { agent_hash: { 'strings': [...], 'generation': int } }
+        self.__current_generation = 0         # monotonic counter; the "flag"
+        self.__refresh_lock      = threading.Lock()
     
     def __repr__(self):
         return str([self.__Optimal_strings,self.__Opt_Values])
@@ -83,7 +99,7 @@ class Map_Elite:
         
         return nearest_key
 
-    def apply_functions(self,functions, x, df):
+    def apply_functions(self,functions, x):
         """
         Apply a list of functions to an input x and return the results as a tuple.
 
@@ -91,12 +107,12 @@ class Map_Elite:
         :param x: The input to the functions
         :return: A tuple of results (f1(x), f2(x), f3(x))
         """
-        return tuple(f(x,df=df) for f in functions)   
+        return tuple(f(x,df=self.df) for f in functions)   
             
-    def Quest(self, Level,df):
-        y = self.__f(Level,df=df)
+    def Quest(self, Level):
+        y = self.__f(Level,df=self.df)
         
-        if not(self.__Variety_Dominess):
+        if not(self.__Variety_Domains):
             for i in range(self.__N):
                 if self.__Optimal_strings[i]=="" or np.abs(self.__alphas[i]-y) < np.abs(self.__alphas[i]-self.__Opt_Values[i]):
                     self.__Opt_Values[i] = y
@@ -104,12 +120,12 @@ class Map_Elite:
             return
         
 
-        input_tuple = self.get_nearest_label(self.apply_functions(self.__Variety_Dominess, Level,df=df), self.__Opt_Values)
+        input_tuple = self.get_nearest_label(self.apply_functions(self.__Variety_Domains, Level), self.__Opt_Values)
         for i in range(self.__N):
             if self.__Optimal_strings[input_tuple][i]=="" or np.abs(self.__alphas[i]-y) < np.abs(self.__alphas[i]-self.__Opt_Values[input_tuple][i]):
                 self.__Opt_Values[input_tuple][i] = y
                 self.__Optimal_strings[input_tuple][i] = Level
-        return
+        return 
     
     def format_array(self,arr, precision=2):
         return np.round(arr, precision)
@@ -123,25 +139,23 @@ class Map_Elite:
     
     def Report(self, Type = "Values"):
         if Type == "Values":
-            return self.printable_formatted_dict(self.__Opt_Values)
+            return self.__Opt_Values
         if Type == "Strings":
             return self.__Optimal_strings
-        else:
-            return
-    
+        
     def Structure(self, row):
         return "".join(row)
 
-    def Key_substraction(self, x, df):
+    def Key_substraction(self, x):
         "-------------X"
         "---------XXXXX"
         "--------------"
         "-------XXXXXXX"
-        if len(df[df["Structures"] ==  x]) == 0:
+        if len(self.df[self.df["Structures"] ==  x]) == 0:
             raise IndexError("Not tokenized Structure")
-        return df[df["Structures"] ==  x]["token"]
+        return self.df[self.df["Structures"] ==  x]["token"]
 
-    def Extract_Level_String(self, examples_codes,df):
+    def Extract_Level_String(self, examples_codes):
         all_temporals = []
 
         for example_code in examples_codes:
@@ -157,73 +171,85 @@ class Map_Elite:
         Level = pd.concat(all_temporals, axis=0, ignore_index=True)
 
         Level["Structures"] = Level.apply(self.Structure, axis=1)
-        Level["token"] = [self.Key_substraction(s, df=df) for s in Level["Structures"]]
+        Level["token"] = [self.Key_substraction(s) for s in Level["Structures"]]
         
         return np.concatenate([s.values for s in Level["token"]])
+    
+    def str_to_tilemap(self, Level):
+
+        if Level=="":
+            raise ValueError("empty str level is no plotable")
+        
+        from Word_Stitching import Jumping_Fiasible_Word
+
+        #print(Jumping_Fiasible_Word(Level,knowledge = Knowledge))
+                
+        tilemap = pd.DataFrame(columns= ["{}".format(i) for i in range(14)])
+        for Key in list(Level):
+            new_row = list(list(self.df.loc[self.df["token"] == Key,"Structures" ])[0])
+            tilemap.loc[len(tilemap)] = new_row
+            
+            
+        tilemap = tilemap.transpose()
+
+        return tilemap
 
     
     
-    def Generate_Mapping(self,example_code, Knowledge, df, Level_Len, module=None, batch_size=1, epochs=256, seed=None,Game_Mode = 0):
+    def Generate_Mapping(self,example_code, Level_Len, module=None, batch_size=1, epochs=256, seed=None,Game_Mode = 0, observability=False):
         if not(module):
             module = Level_Len
 
-        level_sec = self.Extract_Level_String([example_code[0]],df=df) #+" "+ Extract_Level_String([example_code[1]])
-        #Display_Level(Extract_Level_String([example_code[0]]),level_name="1-1".format(example_code),df=df)
-        #Display_Level(Extract_Level_String([example_code[1]]),level_name="1-2".format(example_code),df=df)
+        from Word_Stitching import Jumping_Fiasible_Word
+        from Grammar_Notation import Grammar
+        from plotly.subplots import make_subplots
 
-        G = gn.Grammar(level_sec,knowledge = Knowledge)
+        level_sec = self.Extract_Level_String([example_code[0]]) 
+
+        G = Grammar(level_sec,knowledge = self.Knowledge)
         pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
-        while not(ws.Jumping_Fiasible_Word(pre_Level, knowledge = Knowledge, Game_mod=Game_Mode)):
+        while not(Jumping_Fiasible_Word(pre_Level, knowledge = self.Knowledge, Game_mod=Game_Mode)):
             pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
-        self.Quest(pre_Level,df=df)
+        self.Quest(pre_Level)
 
 
-        for j in range(batch_size):
-            print("Start",Level_Len)
-            print("XX", "t", "Time", "--", "Performance", "--","--", "Fiasible_Word %")
-            base_time = time.time()
-            t=0
-            T=0
-            for i in range(epochs):
-                pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
-                T+=1
-                while not(ws.Jumping_Fiasible_Word(pre_Level, knowledge = Knowledge, Game_mod=Game_Mode)):
-                    T+=1
+        #fig = make_subplots(rows=1, cols=batch_size, subplot_titles=[f"Level {i}" for i in range(batch_size)])
+
+        with profile.context("data_prefetch"):
+            for j in range(batch_size):
+                
+                base_time = time.time()
+                t=0
+                T=0
+                for i in range(epochs):
                     pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
-                
-                t+=1
-                self.Quest(pre_Level,df=df)
-                
+                    T+=1
+                    while not(Jumping_Fiasible_Word(pre_Level, knowledge = self.Knowledge, Game_mod=Game_Mode)):
+                        T+=1
+                        pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
                     
-                if i%100 == 0 or i == batch_size-1:
-                    delta_time = time.time() - base_time
-                    print(i, "t", "%.2f" % (delta_time/60), "--", self.Report(), "--", "%.2f" % (t/T*100),"%")
+                    t+=1
+                    self.Quest(pre_Level)
+            self.Report()
+        #fig.show()
+                    
+        
+
+
+        #profile.print_summary() 
 
     #display and save final level if name is included
-    def Display_Level(self,Knowledge, Level, df, level_name=None):
+    def Display_Level(self, Level, level_name=None):
 
-        if Level=="":
-            print("Gap")
-            return
-
-        print(ws.Jumping_Fiasible_Word(Level,knowledge = Knowledge))
-
-                
-        Display = pd.DataFrame(columns= ["{}".format(i) for i in range(14)])
-        for Key in list(Level):
-            new_row = list(list(df.loc[df["token"] == Key,"Structures" ])[0])
-            Display.loc[len(Display)] = new_row
-            
-            
-        Display = Display.transpose()
+        Display = self.str_to_tilemap(Level)
         if level_name != None:
-            Display.to_csv(r'Super_Mario_Brothers_Maps/final_levels/{}.txt'.format(level_name), index=False,header=False,sep=",")
+            Display.to_csv(r'Super_Mario_Brothers_Maps/generated_levels/Run_Search/{}.txt'.format(level_name), index=False,header=False,sep=",")
         
         print(Display)   
 
-    def find_exact_matches(self,reference, quest):
+    def find_exact_matches(self, quest):
         # Create a dictionary to map each value in the reference list to its index
-        reference_index_map = {value: idx for idx, value in enumerate(reference)}
+        reference_index_map = {value: idx for idx, value in enumerate(self.__alphas)}
         
         # List to store the matches
         matches = []
@@ -236,15 +262,88 @@ class Map_Elite:
         
         return matches
 
-    def Plot_Coordinate(self, cartesian_list, level_curves,Knowledge,df,level_name=None):
-        indexes = self.find_exact_matches(self.__alphas,level_curves)
+    def Plot_Coordinate(self, cartesian_list, level_curves,level_name=None):
+        conflictive_level_curves = [x for x in level_curves if x not in self.__alphas]
+        for x in conflictive_level_curves: print(f"level curve {x} is not an acumulation point")
+        indexes = self.find_exact_matches(level_curves)
+        if len(indexes) == 0 : print("Level curve without matches")
         for x in cartesian_list:
             near_x = self.get_nearest_label(x,self.__Optimal_strings)
             for i in indexes:
-                self.Display_Level(Knowledge, self.__Optimal_strings[near_x][i], df, level_name)
+                try:
+                    self.Display_Level(self.__Optimal_strings[near_x][i], level_name + str(x))
+                    original_val = [f(Level=self.__Optimal_strings[near_x][i],df=self.df) for f in self.__Variety_Domains]
+                    print("variety class: ",near_x," // original_vals: ", original_val, " // Performance: ", self.__f(self.__Optimal_strings[near_x][i],df=self.df))
 
-                original_val = [f(Level=self.__Optimal_strings[near_x][i],df=df) for f in self.__Variety_Dominess]
-                print("variety class: ",near_x," // original_vals: ", original_val, " // Performance: ", self.__f(self.__Optimal_strings[near_x][i],df=df))
+                except:
+                    print(f"{near_x} might has no density in C = {self.__alphas[i]}")
 
+    def __extract_valid_levels(self):
+        
+        import itertools
+        cartesian_list = list(itertools.product(*self.__Grid_points))
+        indexes = self.find_exact_matches(self.__alphas)
+        valid_levels = []
+
+        for x in cartesian_list:
+            near_x = self.get_nearest_label(x,self.__Optimal_strings)
+            for i in indexes:
+                if self.__Optimal_strings[near_x][i] != '':
+                    valid_levels.append(self.__Optimal_strings[near_x][i])
+
+
+        return valid_levels
+
+    def _hasher(self):
+        return
+    
+    
+    def pool_manager(self, agent_hash, request):
+        """Deliver pre-generated level strings/tilemap to RL agents.
+ 
+        Each agent owns an isolated batch built from a snapshot of
+        __Optimal_strings.  When any agent exhausts its batch the first
+        caller triggers Generate_Mapping(request); every later caller that
+        exhausted in the same generation skips the call and just refills
+        from the already-refreshed snapshot.
+        """
+        # 1. Initialise agent batch on first visit
+        if agent_hash not in self.__manager_memory:
+            self.__manager_memory[agent_hash] = {
+                "strings":    self.__extract_valid_levels(),
+                "generation": self.__current_generation,
+            }
+ 
+        # 2. Pop a random string from the agent's batch
+        batch = self.__manager_memory[agent_hash]["strings"]
+        chosen = self.str_to_tilemap(batch.pop(random.randrange(len(batch))))
+ 
+        # 3. Batch exhausted → replenish, generating new levels if needed
+        if not batch:
+            agent_gen = self.__manager_memory[agent_hash]["generation"]
+ 
+            # Fast path (no lock): another agent already bumped the generation
+            # this cycle, so Generate_Mapping was already called.
+            if agent_gen == self.__current_generation:
+ 
+                # Slow path: we may be first — acquire the lock and re-check
+                # (double-checked locking prevents a race between two agents
+                # that both saw agent_gen == __current_generation simultaneously
+                # and would otherwise both call Generate_Mapping, with the
+                # second call deleting the first's output mid-write).
+                with self.__refresh_lock:
+                    if agent_gen == self.__current_generation:
+                        self.Generate_Mapping(**request)    # one call per generation
+                        self.__current_generation += 1
+ 
+            # Refill from __Optimal_strings — either just refreshed above
+            # or already refreshed by a concurrent agent that won the lock.
+            self.__manager_memory[agent_hash] = {
+                "strings":    self.__extract_valid_levels(),
+                "generation": self.__current_generation,
+            }
+ 
+        return chosen
+                
 
 

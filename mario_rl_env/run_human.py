@@ -13,7 +13,6 @@ Controls
 Usage
 -----
   python run_human.py path/to/map.txt
-  python run_human.py path/to/map.txt --obs tiles    # overlay tile obs
 """
 
 from __future__ import annotations
@@ -21,19 +20,18 @@ from __future__ import annotations
 import argparse
 import sys
 import os
+from typing import Union
 
 # ensure local imports work when running directly
 sys.path.insert(0, os.path.dirname(__file__))
 
-from constants import FPS
+try:
+    from .constants import FPS
+except ImportError:
+    from constants import FPS
 
 
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Human-playable Mario RL")
-    parser.add_argument("map", help="Path to the .txt tile map")
-    parser.add_argument("--fps", type=int, default=FPS)
-    args = parser.parse_args()
-
+def run(map_path: Union[str, "pandas.DataFrame"], fps: int = FPS) -> None:
     try:
         import pygame
     except ImportError:
@@ -43,8 +41,8 @@ def main() -> None:
     from env import MarioEnv
     from metrics import MetricsTracker
 
-    env = MarioEnv(map_path=args.map, obs_mode="rgb",
-                   render_mode="human", fps=args.fps)
+    env = MarioEnv(map_path=map_path, obs_mode="rgb",
+                   render_mode="human", fps=fps)
     tracker = MetricsTracker(keep_steps=True)
 
     obs, _ = env.reset()
@@ -60,7 +58,6 @@ def main() -> None:
 
     running = True
     while running:
-        # ── event handling ────────────────────────────────────────────────
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
@@ -81,7 +78,6 @@ def main() -> None:
             'run':   keys[pygame.K_x]     or keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT],
         }
 
-        # map dict-actions to a discrete action index (for tracker)
         action_idx = _actions_to_idx(actions)
 
         obs, reward, done, trunc, info = env.step(action_idx)
@@ -107,6 +103,15 @@ def main() -> None:
     if save == "y":
         tracker.save_csv("metrics_human.csv")
         tracker.save_replay("replay_human_last.json")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Human-playable Mario RL")
+    parser.add_argument("map", help="Path to the .txt tile map")
+    parser.add_argument("--fps", type=int, default=FPS)
+    args = parser.parse_args()
+
+    run(map_path=args.map, fps=args.fps)
 
 
 def _actions_to_idx(actions: dict) -> int:
