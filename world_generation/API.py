@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import itertools
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
@@ -7,9 +9,9 @@ from pydantic import BaseModel, Field
 
 from .Map_Grammars_Elite import Map_Elite
 from .Performance_Evaluation import Performance
-from .Variety_Domains import calculate_slope, landings_score, colliders_score
+from .Variety_Domains import calculate_slope, colliders_score, landings_score
 
-app = FastAPI(title="World Generation API")
+app = FastAPI(title="World Generation API", version="1.0")
 
 _FUNCTION_MAP = {
     "Performance": Performance,
@@ -22,7 +24,7 @@ _VARIETY_MAP = {
 }
 
 _map_elite_registry: Dict[str, Map_Elite] = {}
-_next_instance_id = 1
+_instance_id_counter = itertools.count(1)
 
 
 class MapEliteCreateRequest(BaseModel):
@@ -64,6 +66,21 @@ class MapEliteResponse(BaseModel):
     alphas: List[float]
     variety_domains: List[str]
     grid_points: List[List[float]]
+    optimal_count: int = Field(0, description="Number of discovered level candidates")
+    generation: int = Field(0, description="Current generation counter")
+
+
+class GenerateMappingResponse(BaseModel):
+    status: str
+    instance_id: str
+    optimal_count: int
+    generation: int
+
+
+class PoolManagerResponse(BaseModel):
+    instance_id: str
+    agent_hash: str
+    tilemap: List[List[Any]]
 
 
 def _resolve_function(name: str):
@@ -89,12 +106,17 @@ def _get_instance(instance_id: str) -> Map_Elite:
 
 def _serialize_tilemap(tilemap: Any) -> List[List[Any]]:
     try:
-        values = tilemap.values.tolist()
+        return tilemap.values.tolist()
     except AttributeError:
         if isinstance(tilemap, list):
             return tilemap
         raise HTTPException(status_code=500, detail="Unsupported tilemap format")
-    return values
+
+
+@app.on_event("startup")
+def create_instance_store() -> None:
+    state_dir = Path(__file__).resolve().parent / "instances"
+    state_dir.mkdir(parents=True, exist_ok=True)
 
 
 @app.get("/")
@@ -103,57 +125,85 @@ def read_root() -> Dict[str, Any]:
         "message": "World Generation API",
         "available_functions": list(_FUNCTION_MAP),
         "available_variety_domains": list(_VARIETY_MAP),
+        "instances": len(_map_elite_registry),
     }
 
 
 @app.post("/instances", response_model=MapEliteResponse)
 def create_map_elite(payload: MapEliteCreateRequest) -> MapEliteResponse:
-    global _next_instance_id
-
     function = _resolve_function(payload.function)
     variety_functions = _resolve_variety_functions(payload.variety_domains)
+
+    instance_id = str(next(_instance_id_counter))
+    state_dir = Path(__file__).resolve().parent / "instances"
+    state_path = state_dir / f"map_elite_{instance_id}.json"
 
     instance = Map_Elite(
         function,
         alphas=payload.alphas,
         Variety_Domains=variety_functions,
         Grid_points=payload.grid_points,
+        state_path=str(state_path),
     )
 
-    instance_id = str(_next_instance_id)
-    _next_instance_id += 1
     _map_elite_registry[instance_id] = instance
 
     return MapEliteResponse(
         instance_id=instance_id,
-        function=payload.function,
-        alphas=payload.alphas,
-        variety_domains=payload.variety_domains,
-        grid_points=payload.grid_points,
+        function=instance.get_function_name(),
+        alphas=instance.get_alphas(),
+        variety_domains=instance.get_variety_domain_names(),
+        grid_points=instance.get_grid_points(),
+        optimal_count=instance.get_optimal_count(),
+        generation=instance.get_current_generation(),
     )
 
 
-@app.get("/instances")
+@app.get("/instances", response_model=List[MapEliteResponse])
 def list_instances() -> List[MapEliteResponse]:
-    response: List[MapEliteResponse] = []
-    for instance_id, instance in _map_elite_registry.items():
-        response.append(
-                MapEliteResponse(
-                instance_id=instance_id,
-                function="Performance",
-                alphas=list(instance._Map_Elite__alphas),
-                variety_domains=[
-                    name for name, fn in _VARIETY_MAP.items()
-                    if fn in instance._Map_Elite__Variety_Domains
-                ],
-                grid_points=[list(point) for point in instance._Map_Elite__Grid_points],
-            )
+    return [
+        MapEliteResponse(
+            instance_id=instance_id,
+            function=instance.get_function_name(),
+            alphas=instance.get_alphas(),
+            variety_domains=instance.get_variety_domain_names(),
+            grid_points=instance.get_grid_points(),
+            optimal_count=instance.get_optimal_count(),
+            generation=instance.get_current_generation(),
         )
-    return response
+        for instance_id, instance in _map_elite_registry.items()
+    ]
 
 
-@app.post("/instances/{instance_id}/generate_mapping")
-def generate_mapping(instance_id: str, payload: GenerateMappingRequest) -> Dict[str, Any]:
+@app.get("/instances/{instance_id}", response_model=MapEliteResponse)
+def get_instance(instance_id: str) -> MapEliteResponse:
+    instance = _get_instance(instance_id)
+    return MapEliteResponse(
+        instance_id=instance_id,
+        function=instance.get_function_name(),
+        alphas=instance.get_alphas(),
+        variety_domains=instance.get_variety_domain_names(),
+        grid_points=instance.get_grid_points(),
+        optimal_count=instance.get_optimal_count(),
+        generation=instance.get_current_generation(),
+    )
+
+
+@app.delete("/instances/{instance_id}")
+def delete_instance(instance_id: str) -> Dict[str, Any]:
+    instance = _get_instance(instance_id)
+    state_path = instance.get_state_path()
+    _map_elite_registry.pop(instance_id)
+    if state_path:
+        try:
+            Path(state_path).unlink()
+        except OSError:
+            pass
+    return {"status": "deleted", "instance_id": instance_id}
+
+
+@app.post("/instances/{instance_id}/generate_mapping", response_model=GenerateMappingResponse)
+def generate_mapping(instance_id: str, payload: GenerateMappingRequest) -> GenerateMappingResponse:
     instance = _get_instance(instance_id)
     instance.Generate_Mapping(
         example_code=payload.example_code,
@@ -165,23 +215,23 @@ def generate_mapping(instance_id: str, payload: GenerateMappingRequest) -> Dict[
         Game_Mode=payload.Game_Mode,
         observability=payload.observability,
     )
-    return {
-        "status": "generated",
-        "instance_id": instance_id,
-        "optimal_count": len(getattr(instance, "_Map_Elite__Optimal_strings", [])),
-        "generation": getattr(instance, "_Map_Elite__current_generation", None),
-    }
+    return GenerateMappingResponse(
+        status="generated",
+        instance_id=instance_id,
+        optimal_count=instance.get_optimal_count(),
+        generation=instance.get_current_generation(),
+    )
 
 
-@app.post("/instances/{instance_id}/pool_manager")
-def pool_manager(instance_id: str, payload: PoolManagerRequest) -> Dict[str, Any]:
+@app.post("/instances/{instance_id}/pool_manager", response_model=PoolManagerResponse)
+def pool_manager(instance_id: str, payload: PoolManagerRequest) -> PoolManagerResponse:
     instance = _get_instance(instance_id)
     tilemap = instance.pool_manager(payload.agent_hash, payload.request)
-    return {
-        "instance_id": instance_id,
-        "agent_hash": payload.agent_hash,
-        "tilemap": _serialize_tilemap(tilemap),
-    }
+    return PoolManagerResponse(
+        instance_id=instance_id,
+        agent_hash=payload.agent_hash,
+        tilemap=_serialize_tilemap(tilemap),
+    )
 
 
 @app.post("/str_to_tilemap")

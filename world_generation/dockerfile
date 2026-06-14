@@ -1,0 +1,14 @@
+# Official Python base image
+FROM python:3.12-slim
+
+WORKDIR /app
+
+# Install Python dependencies from the repository root
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy only the world_generation package into the container
+COPY world_generation /app/world_generation
+
+EXPOSE 8000
+CMD ["uvicorn", "world_generation.API:app", "--host", "0.0.0.0", "--port", "8000"]

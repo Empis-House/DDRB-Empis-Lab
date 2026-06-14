@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.git/
+.history/
+history/
+checkpoints/
+results.json
+.DS_Store

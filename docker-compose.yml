@@ -1,0 +1,18 @@
+services:
+  world-gen-api:
+    build:
+      context: .
+      dockerfile: world_generation/dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./world_generation/instances:/app/world_generation/instances
+      - ./Super_Mario_Brothers_Maps:/app/Super_Mario_Brothers_Maps
+    environment:
+      - PYTHONUNBUFFERED=1
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s

@@ -12,14 +12,15 @@ Check List:
 
 import random
 import threading
+import json
 import pandas as pd
 import numpy as np
 from itertools import product
 import time
-import numpy as np
 from scipy.spatial import distance
 import sys
 import os
+from pathlib import Path
 
 from ml_profiler import profile
 
@@ -30,7 +31,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 class Map_Elite:
     all = []
     
-    def __init__(self, function, alphas =[0], Variety_Domains = [], Grid_points =[]):
+    def __init__(self, function, alphas =[0], Variety_Domains = [], Grid_points =[], state_path=None):
         # function must acept a Level as input
         # fuction must have Image the real interval [0,1]
         # The Filtter will capting the optimal value (min)
@@ -38,6 +39,7 @@ class Map_Elite:
         self.__f = function
         self.__alphas = alphas
         self.__Variety_Domains = Variety_Domains
+        self.__state_path = Path(state_path) if state_path else None
         
         self.__Opt_Values = None
         self.__Optimal_strings = None
@@ -65,9 +67,82 @@ class Map_Elite:
         self.__manager_memory    = {}         # { agent_hash: { 'strings': [...], 'generation': int } }
         self.__current_generation = 0         # monotonic counter; the "flag"
         self.__refresh_lock      = threading.Lock()
+        if self.__state_path is not None:
+            self.__load_manager_state()
     
     def __repr__(self):
         return str([self.__Optimal_strings,self.__Opt_Values])
+
+    def get_function_name(self):
+        return getattr(self.__f, "__name__", str(self.__f))
+
+    def get_alphas(self):
+        return list(self.__alphas)
+
+    def get_variety_domain_names(self):
+        return [getattr(fn, "__name__", str(fn)) for fn in self.__Variety_Domains]
+
+    def get_grid_points(self):
+        return [list(point) for point in self.__Grid_points]
+
+    def get_optimal_count(self):
+        if not self.__Variety_Domains:
+            return sum(1 for s in self.__Optimal_strings if s != "")
+        return sum(
+            1
+            for values in self.__Optimal_strings.values()
+            for s in values
+            if s != ""
+        )
+
+    def get_current_generation(self):
+        return int(self.__current_generation)
+
+    def get_state_path(self):
+        return str(self.__state_path) if self.__state_path is not None else None
+
+    def __manager_state_path(self):
+        return str(self.__state_path) if self.__state_path is not None else None
+
+    def __load_manager_state(self):
+        path = self.__manager_state_path()
+        if path is None or not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            self.__current_generation = int(data.get("generation", self.__current_generation))
+            self.__manager_memory = {}
+            for agent_hash, payload in data.get("manager_memory", {}).items():
+                strings = payload.get("strings", [])
+                generation = int(payload.get("generation", self.__current_generation))
+                if not isinstance(strings, list):
+                    strings = []
+                self.__manager_memory[agent_hash] = {
+                    "strings": strings,
+                    "generation": generation,
+                }
+        except Exception as exc:
+            print(f"[Map_Elite] Warning: failed to load manager state from {path}: {exc}")
+
+    def __save_manager_state(self):
+        path = self.__manager_state_path()
+        if path is None:
+            return
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            tmp_path = f"{path}.tmp"
+            data = {
+                "generation": self.__current_generation,
+                "manager_memory": self.__manager_memory,
+            }
+            with open(tmp_path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, indent=2)
+            if os.path.exists(path):
+                os.remove(path)
+            os.replace(tmp_path, path)
+        except Exception as exc:
+            print(f"[Map_Elite] Warning: failed to save manager state to {path}: {exc}")
     
     def __len__(self):
         return self.__N
@@ -231,6 +306,7 @@ class Map_Elite:
                     t+=1
                     self.Quest(pre_Level)
             self.Report()
+        self.__save_manager_state()
         #fig.show()
                     
         
@@ -279,18 +355,19 @@ class Map_Elite:
                     print(f"{near_x} might has no density in C = {self.__alphas[i]}")
 
     def __extract_valid_levels(self):
-        
+        if not self.__Variety_Domains:
+            return [s for s in self.__Optimal_strings if s != ""]
+
         import itertools
         cartesian_list = list(itertools.product(*self.__Grid_points))
         indexes = self.find_exact_matches(self.__alphas)
         valid_levels = []
 
         for x in cartesian_list:
-            near_x = self.get_nearest_label(x,self.__Optimal_strings)
+            near_x = self.get_nearest_label(x, self.__Optimal_strings)
             for i in indexes:
                 if self.__Optimal_strings[near_x][i] != '':
                     valid_levels.append(self.__Optimal_strings[near_x][i])
-
 
         return valid_levels
 
@@ -307,18 +384,24 @@ class Map_Elite:
         exhausted in the same generation skips the call and just refills
         from the already-refreshed snapshot.
         """
-        # 1. Initialise agent batch on first visit
-        if agent_hash not in self.__manager_memory:
+        # 1. Initialise agent batch on first visit or when batch is empty
+        if agent_hash not in self.__manager_memory or not self.__manager_memory[agent_hash]["strings"]:
+            strings = self.__extract_valid_levels()
+            if not strings:
+                self.Generate_Mapping(**request)
+                self.__current_generation += 1
+                strings = self.__extract_valid_levels()
+            if not strings:
+                raise RuntimeError("Pool manager could not produce any valid levels. Check Generate_Mapping parameters.")
             self.__manager_memory[agent_hash] = {
-                "strings":    self.__extract_valid_levels(),
+                "strings": strings,
                 "generation": self.__current_generation,
             }
  
-        # 2. Pop a random string from the agent's batch
         batch = self.__manager_memory[agent_hash]["strings"]
         chosen = self.str_to_tilemap(batch.pop(random.randrange(len(batch))))
  
-        # 3. Batch exhausted → replenish, generating new levels if needed
+        # 2. Batch exhausted → replenish, generating new levels if needed
         if not batch:
             agent_gen = self.__manager_memory[agent_hash]["generation"]
  
@@ -342,7 +425,11 @@ class Map_Elite:
                 "strings":    self.__extract_valid_levels(),
                 "generation": self.__current_generation,
             }
+            batch = self.__manager_memory[agent_hash]["strings"]
+            if not batch:
+                raise RuntimeError("Pool manager could not produce any valid levels after regeneration.")
  
+        self.__save_manager_state()
         return chosen
                 
 

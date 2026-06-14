@@ -9,6 +9,8 @@ Check List:
 """"""
 
 import json
+import os
+import time
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -18,6 +20,19 @@ import itertools
 
 
 API_BASE_URL = "http://127.0.0.1:8000"
+
+
+def wait_for_api(url: str, retries: int = 10, delay: float = 1.0) -> None:
+    for attempt in range(1, retries + 1):
+        try:
+            request = Request(url, headers={"Content-Type": "application/json"})
+            with urlopen(request, timeout=5) as response:
+                if response.status == 200:
+                    return
+        except Exception:
+            if attempt == retries:
+                raise
+            time.sleep(delay)
 
 
 def api_post(path, payload):
@@ -42,6 +57,8 @@ alphas = [0, 0.1, 1]  # These are the system acumulation points on the interval 
 
 
 def main() -> None:
+    wait_for_api(f"{API_BASE_URL}/")
+
     create_payload = {
         "function": "Performance",
         "alphas": alphas,
@@ -70,14 +87,19 @@ def main() -> None:
         )
         return pd.DataFrame(response["tilemap"])
 
-    agent_run(
+    result = agent_run(
         map_path=agent_runner,
         render=True,
-        obs_mode="features",
-        n_episodes=20,
-        batch_size=4,
-        agent_name="right_jump",
+        render_last=True,
+        n_episodes=500,
+        batch_size=50,
+        agent_name="smart_heuristic",
+        verbose=True,
+        checkpoint_path="checkpoints/smart_heuristic.pkl",
     )
+
+    print("Agent result:")
+    print(result)
 
 
 if __name__ == "__main__":

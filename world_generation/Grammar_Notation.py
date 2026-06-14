@@ -23,36 +23,6 @@ import sys
 import os
 
 sys.path.insert(0, os.path.dirname(__file__))
-
-"""## Samael  Search Aceleration via Machine Learning «Ceguera de Dios»
-## https://www.youtube.com/watch?v=FHdlXe1bSe4
-import torch
-import torch.nn as nn
-import torch.nn.funcytional as F
-from torch.optim import SGD
-
-import matplotlib.pylot as plt
-import seborn as sns
-
-class BasicNN(nn.Module):
-    
-    def __init__(self):
-        
-        super().__init__()
-        
-        self.conv = nn.Conv2d(2, 1, 6)
-        self.pool = nn.MaxPool2d(3,3)
-        
-        self.fc2 = nn.Linear(9, 128)
-        
-    def Edges_Likelyhood(self, x, output_zise):
-        x = self.pool(F.relu(self.conv(x)))
-        x = F.relu(self.fc1(x))
-        
-        #Drop_min until output_zise
-        
-        
-        return x   """
     
 #defining word as a class and its components
 class Word:
@@ -133,7 +103,7 @@ class Graph:
     
 #Defining grammars
 #receives an exmaple level as a string and an optional list of pre made levels
-#pre made levels need to have same starting and final word the same as the example
+#pre made levels need to have same starting and final tile as the example level
 class Grammar:
     
     all = []

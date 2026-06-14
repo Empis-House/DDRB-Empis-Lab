@@ -61,7 +61,12 @@ def Jumping_Fiasible_Word(Level, knowledge, Game_mod = 0):
     Int_Landings_List = [Landings[x] for x in Level]
     Int_Colliders_List = [Colliders[x] for x in Level]
     
-    
+    def First_One_Above(mask, start):
+        for height in range(start, Band_Height):
+            if Punctual_Binary_Prop(mask, height) == 1:
+                return height
+        return None
+
     All_Landings_Accesibility_Stitched = True
     n = len(Level)
      #FIX
@@ -94,60 +99,53 @@ def Jumping_Fiasible_Word(Level, knowledge, Game_mod = 0):
         
         
         for i in R_Band_Height:
-            
-            
-            if Punctual_Binary_Prop(Initial, i) == 1:
-                LA_individually_Stitched_L = False
-                JW_individually_Stitched = False
-                
-                #check for each land if exist previus land to jump from 
-                
-                stalactite_block = Band_Height                            
-                
-                for j in Back_Stiching:
-                        
-                    Int_Landing =  Int_Landings_List[j]
-                    Int_Colliders = Int_Colliders_List[j]
-                    
-                    temp = Initial-2**i
-                    
-                    if temp<2**i:
-                        if Range_Binary_Prop(Int_Landing,i-Max_Height,stalactite_block)!= 0:
-                            LA_individually_Stitched_L = True 
-                        elif Int_Colliders != Int_Landing:
-                            first = False
-                            for x in range(0,Band_Height):
-                                if Punctual_Binary_Prop(Int_Colliders,x) == 1 and not(first):
-                                    first = True
-                                    stalactite_block = x 
-                                
-                    else:
-                        first = False
-                        for x in range(i+1,Band_Height):
-                            if Punctual_Binary_Prop(Initial,x) == 1 and not(first):
-                                first = True
-                                stalactite_block = x    
-                        
-                        if Range_Binary_Prop(Int_Landing,i-Max_Height,stalactite_block)!= 0:
-                                LA_individually_Stitched_L = True
-                            
-                #check for each land if exist other land to jump to
-                for j in np.concatenate((Forward_Stitching,Back_Stiching), axis=0) :
-                    
-                    Int_Landing =  Int_Landings_List[j]
-                    
-                    if Range_Binary_Prop(Int_Landing,0,i+Max_Height)!= 0:
-                            JW_individually_Stitched = True
-                            
+            if Punctual_Binary_Prop(Initial, i) != 1:
+                continue
+
+            LA_individually_Stitched_L = False
+            JW_individually_Stitched = False
+
+            for j in Back_Stiching:
+                Int_Landing = Int_Landings_List[j]
+                Int_Colliders = Int_Colliders_List[j]
+                if Int_Landing == 0:
+                    continue
+
+                top_block = Band_Height
+                next_landing_above = First_One_Above(Initial, i + 1)
+                if next_landing_above is not None:
+                    top_block = min(top_block, next_landing_above)
+
+                next_collider_above = First_One_Above(Int_Colliders, i + 1)
+                if next_collider_above is not None:
+                    top_block = min(top_block, next_collider_above)
+
+                min_height = max(0, i - Max_Height)
+                max_height = min(top_block - 1, i + Max_Height)
+
+                if max_height >= min_height and Range_Binary_Prop(Int_Landing, min_height, max_height) != 0:
+                    LA_individually_Stitched_L = True
+                    break
+
+            for j in np.concatenate((Forward_Stitching, Back_Stiching), axis=0):
+                Int_Landing = Int_Landings_List[j]
+                if Range_Binary_Prop(Int_Landing, 0, i + Max_Height) != 0:
+                    JW_individually_Stitched = True
+                    break
+
+            if n_letter == 0:
+                continue
+
+            if not LA_individually_Stitched_L or not JW_individually_Stitched:
+                return False
+
         if n_letter == 0:
             LA_individually_Stitched_L = True
             JW_individually_Stitched = True
-            
-                    
-        #Check if everything is true
+
         All_Landings_Accesibility_Stitched = All_Landings_Accesibility_Stitched and LA_individually_Stitched_L and JW_individually_Stitched
-        if not(All_Landings_Accesibility_Stitched):
-            return All_Landings_Accesibility_Stitched
+        if not All_Landings_Accesibility_Stitched:
+            return False
         
         
         

@@ -49,7 +49,7 @@ try:
         OBS_TILES_W, OBS_TILES_H,
         MAX_STEPS_PER_EPISODE,
     )
-    from .tilemap import TileMap, TileType, parse_tilemap
+    from .tilemap import TileMap, TileType, SOLID_TILES, parse_tilemap
     from .game_state import GameState
     from .renderer import Renderer
 except ImportError:
@@ -58,7 +58,7 @@ except ImportError:
         OBS_TILES_W, OBS_TILES_H,
         MAX_STEPS_PER_EPISODE,
     )
-    from tilemap import TileMap, TileType, parse_tilemap
+    from tilemap import TileMap, TileType, SOLID_TILES, parse_tilemap
     from game_state import GameState
     from renderer import Renderer
 
@@ -80,8 +80,11 @@ N_ACTIONS = len(ACTION_MAP)
 
 # feature vector length (must match _make_feature_obs)
 N_FEATURES = 2 + 2 + 1 + 1 + 1 + 1 + OBS_TILES_H * OBS_TILES_W + 4 * 5
+N_FEATURES_LAYERS = 2 + 2 + 1 + 1 + 1 + 1 + OBS_TILES_H * OBS_TILES_W * 3 + 4 * 5
 # mario(x,y) + vel(vx,vy) + on_ground + coins + kills + mario_state
 # + local tile window
+# + landing mask layer
+# + collider mask layer
 # + up to 5 nearest goomba (dx, dy, vx, exists)
 
 
@@ -113,8 +116,8 @@ class MarioEnv(gym.Env):
         fps: int = FPS,
     ):
         super().__init__()
-        assert obs_mode in ("rgb", "tiles", "features"), \
-            f"obs_mode must be 'rgb', 'tiles', or 'features'. Got: {obs_mode}"
+        assert obs_mode in ("rgb", "tiles", "features", "features_layers"), \
+            f"obs_mode must be 'rgb', 'tiles', 'features', or 'features_layers'. Got: {obs_mode}"
 
         self.obs_mode = obs_mode
         self.render_mode = render_mode
@@ -142,6 +145,12 @@ class MarioEnv(gym.Env):
                 low=0, high=len(TileType),
                 shape=(OBS_TILES_H, OBS_TILES_W),
                 dtype=np.int8,
+            )
+        elif obs_mode == "features_layers":
+            self.observation_space = spaces.Box(
+                low=-np.inf, high=np.inf,
+                shape=(N_FEATURES_LAYERS,),
+                dtype=np.float32,
             )
         else:  # features
             self.observation_space = spaces.Box(
@@ -209,6 +218,8 @@ class MarioEnv(gym.Env):
             return self._make_rgb_obs()
         elif self.obs_mode == "tiles":
             return self._make_tile_obs()
+        elif self.obs_mode == "features_layers":
+            return self._make_feature_obs(include_structural_layers=True)
         else:
             return self._make_feature_obs()
 
@@ -258,7 +269,7 @@ class MarioEnv(gym.Env):
 
         return grid
 
-    def _make_feature_obs(self) -> np.ndarray:
+    def _make_feature_obs(self, include_structural_layers: bool = False) -> np.ndarray:
         """
         Build a compact float32 feature vector.
 
@@ -272,6 +283,8 @@ class MarioEnv(gym.Env):
           [6]  kills / 50
           [7]  mario_state_encoded               (0=SMALL,1=BIG,2=DEAD)
           [8 .. 8+H*W-1]  flattened tile window  (int8 → float, /N_TILES)
+          [.. .. ..] optional structural layers for world description:
+             landing mask and collider mask around Mario
           last 20:  up to 5 nearest goombas
                     per goomba: [exists, dx/screen_w, dy/screen_h, goomba_vx_dir]
         """
@@ -307,6 +320,12 @@ class MarioEnv(gym.Env):
         tile_grid = self._make_tile_obs().flatten().astype(np.float32) / n_tiles
         feats.extend(tile_grid.tolist())
 
+        if include_structural_layers:
+            landing_mask = self._make_landing_mask().flatten().astype(np.float32)
+            collider_mask = self._make_collider_mask().flatten().astype(np.float32)
+            feats.extend(landing_mask.tolist())
+            feats.extend(collider_mask.tolist())
+
         # nearest 5 goombas
         alive = [g for g in gs.goombas if g.is_alive()]
         alive.sort(key=lambda g: abs(g.cx - mario.cx))
@@ -323,6 +342,46 @@ class MarioEnv(gym.Env):
                 feats += [0.0, 0.0, 0.0, 0.0]
 
         return np.array(feats, dtype=np.float32)
+
+    def _make_landing_mask(self) -> np.ndarray:
+        """Return a dense landing surface mask in Mario's local tile window."""
+        gs = self._gs
+        mario = gs.mario
+        tm = gs.tilemap
+
+        mario_col = int(mario.cx // TILE_SIZE)
+        mario_row = int(mario.cy // TILE_SIZE)
+        half_w = OBS_TILES_W // 2
+        half_h = OBS_TILES_H // 2
+
+        mask = np.zeros((OBS_TILES_H, OBS_TILES_W), dtype=np.float32)
+        for ri, row in enumerate(range(mario_row - half_h,
+                                        mario_row - half_h + OBS_TILES_H)):
+            for ci, col in enumerate(range(mario_col - half_w,
+                                            mario_col - half_w + OBS_TILES_W)):
+                if tm.get(col, row) == TileType.AIR and tm.get(col, row + 1) in SOLID_TILES:
+                    mask[ri, ci] = 1.0
+        return mask
+
+    def _make_collider_mask(self) -> np.ndarray:
+        """Return a binary collider mask for solid terrain in Mario's local tile window."""
+        gs = self._gs
+        mario = gs.mario
+        tm = gs.tilemap
+
+        mario_col = int(mario.cx // TILE_SIZE)
+        mario_row = int(mario.cy // TILE_SIZE)
+        half_w = OBS_TILES_W // 2
+        half_h = OBS_TILES_H // 2
+
+        mask = np.zeros((OBS_TILES_H, OBS_TILES_W), dtype=np.float32)
+        for ri, row in enumerate(range(mario_row - half_h,
+                                        mario_row - half_h + OBS_TILES_H)):
+            for ci, col in enumerate(range(mario_col - half_w,
+                                            mario_col - half_w + OBS_TILES_W)):
+                if tm.get(col, row) in SOLID_TILES:
+                    mask[ri, ci] = 1.0
+        return mask
 
     # ── Utility ───────────────────────────────────────────────────────────────
 

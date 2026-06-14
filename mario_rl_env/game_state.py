@@ -14,6 +14,7 @@ from typing import List, Optional, Tuple
 try:
     from .constants import (
         TILE_SIZE, GOOMBA_SPEED,
+        SCREEN_W,
         MARIO_WALK_SPEED, BOUNCE_VY,
         REWARD_PER_TILE_RIGHT, REWARD_PER_TILE_LEFT,
         REWARD_KILL_ENEMY, REWARD_COIN, REWARD_DEATH,
@@ -26,6 +27,7 @@ try:
 except ImportError:
     from constants import (
         TILE_SIZE, GOOMBA_SPEED,
+        SCREEN_W,
         MARIO_WALK_SPEED, BOUNCE_VY,
         REWARD_PER_TILE_RIGHT, REWARD_PER_TILE_LEFT,
         REWARD_KILL_ENEMY, REWARD_COIN, REWARD_DEATH,
@@ -108,6 +110,25 @@ class GameState:
 
         # ── Physics ──────────────────────────────────────────────────────
         events = move_mario(self.mario, self.tilemap, actions)
+
+        # Activate goombas when they enter the visible viewport so they
+        # remain idle until the player can see them. This prevents enemies
+        # from moving before the camera reaches them.
+        try:
+            half_w = SCREEN_W // 2
+            cam_x = max(0, min(int(self.mario.cx) - half_w,
+                               self.tilemap.pixel_width - SCREEN_W))
+        except Exception:
+            # conservative fallback if tilemap pixel width missing
+            cam_x = max(0, int(self.mario.cx) - SCREEN_W // 2)
+
+        for g in self.goombas:
+            # if goomba hasn't been activated yet, start moving when any
+            # part of its bounding box becomes visible in the viewport
+            if g.is_alive() and abs(g.vx) < 1e-6:
+                if (g.x + g.w) >= cam_x and g.x <= cam_x + SCREEN_W:
+                    # default direction: move left
+                    g.vx = -GOOMBA_SPEED
 
         for g in self.goombas:
             move_goomba(g, self.tilemap)
@@ -220,20 +241,20 @@ class GameState:
         clearance = 3
 
         start_col = 1
+        start_row = 1
         for col in range(1, min(8, tm.width)):
 
             solid_rows = [r for r in range(tm.height) if tm.is_solid(col, r)]
             landings = [x for x in solid_rows if not x-1 in solid_rows]
-            lowest_land = max(landings)
-
             if not landings:
-                start_col= 1
+                start_col = 1
                 start_row = 1
                 break
 
+            lowest_land = max(landings)
             if lowest_land >= 2:
-                start_col= col
-                start_row = lowest_land-1
+                start_col = col
+                start_row = lowest_land - 1
                 break
 
         x = start_col * TILE_SIZE + (TILE_SIZE - MARIO_W) // 2
@@ -244,10 +265,21 @@ class GameState:
         """Instantiate one Goomba per enemy spawn in the tilemap."""
         goombas: List[Goomba] = []
         from constants import GOOMBA_W, GOOMBA_H
+        # avoid spawning enemies right next to Mario's spawn column
+        clearance_cols = 3
+        try:
+            mario_col = int(self.mario.cx // TILE_SIZE)
+        except Exception:
+            mario_col = None
+
         for (col, row) in self.tilemap_source.enemy_spawns:
+            if mario_col is not None and abs(col - mario_col) <= clearance_cols:
+                # skip enemy spawn near mario start
+                continue
             x = col * TILE_SIZE + (TILE_SIZE - GOOMBA_W) // 2
             y = row * TILE_SIZE
-            g = Goomba(x=float(x), y=float(y), vx=-GOOMBA_SPEED)
+            # spawn idle; activate when entering the viewport
+            g = Goomba(x=float(x), y=float(y), vx=0.0)
             goombas.append(g)
         return goombas
 

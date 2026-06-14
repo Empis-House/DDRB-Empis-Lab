@@ -14,7 +14,6 @@ import pandas as pd
 import time
 import numpy as np
 import itertools
-import numpy as np
 from scipy.stats import linregress
 
 def calculate_slope(Level,df):
