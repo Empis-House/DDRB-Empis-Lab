@@ -22,9 +22,14 @@ import argparse
 import sys
 import os
 import json
-from typing import Union, Optional, Callable, Any
+import time
+from collections import deque
+from typing import TYPE_CHECKING, Any, Optional, Union
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 # ensure local imports work when running directly
 sys.path.insert(0, os.path.dirname(__file__))
@@ -35,91 +40,187 @@ except ImportError:
     from constants import FPS
 
 
-def _api_post(url: str, payload: dict) -> dict:
-    """Make a POST request to the world generation API."""
-    body = json.dumps(payload).encode("utf-8")
-    request = Request(url, data=body, headers={"Content-Type": "application/json"})
+class WorldGenerationApiClient:
+    """Thin client for the world generation HTTP API used by infinite mode."""
+
+    def __init__(self, base_url: str):
+        self.base_url = base_url.rstrip("/")
+
+    def wait_until_ready(self, retries: int = 10, delay: float = 1.0) -> None:
+        root_url = f"{self.base_url}/"
+        for attempt in range(1, retries + 1):
+            try:
+                request = Request(root_url, headers={"Content-Type": "application/json"})
+                with urlopen(request, timeout=5) as response:
+                    if response.status == 200:
+                        return
+            except Exception:
+                if attempt == retries:
+                    raise RuntimeError(f"API did not become ready at {root_url}")
+                time.sleep(delay)
+
+    def post(self, path: str, payload: dict) -> dict:
+        url = f"{self.base_url}{path}"
+        body = json.dumps(payload).encode("utf-8")
+        request = Request(url, data=body, headers={"Content-Type": "application/json"})
+        try:
+            with urlopen(request) as response:
+                return json.load(response)
+        except HTTPError as exc:
+            message = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"API request failed: {exc.code} {exc.reason} {message}")
+        except URLError as exc:
+            raise RuntimeError(f"API connection failed: {exc.reason}")
+
+    def create_instance(
+        self,
+        function: str = "Performance",
+        alphas: Optional[list] = None,
+        variety_domains: Optional[list] = None,
+        grid_points: Optional[list] = None,
+    ) -> str:
+        if alphas is None:
+            alphas = [0.0, 0.1, 1.0]
+        if variety_domains is None:
+            variety_domains = ["calculate_slope", "colliders_score"]
+        if grid_points is None:
+            grid_points = [[0, 0.5], [0, 1]]
+
+        response = self.post(
+            "/instances",
+            {
+                "function": function,
+                "alphas": alphas,
+                "variety_domains": variety_domains,
+                "grid_points": grid_points,
+            },
+        )
+        return response["instance_id"]
+
+    def generate_mapping(self, instance_id: str, request_payload: dict) -> None:
+        payload = {
+            "example_code": request_payload.get("example_code", ["1-1"]),
+            "Level_Len": request_payload.get("Level_Len", 40),
+            "module": request_payload.get("module", request_payload.get("Level_Len", 40)),
+            "batch_size": request_payload.get("batch_size", 1),
+            "epochs": request_payload.get("epochs", 10),
+        }
+        self.post(f"/instances/{instance_id}/generate_mapping", payload)
+
+    def fetch_next_level(
+        self,
+        instance_id: str,
+        agent_hash: str,
+        request_payload: dict,
+    ) -> "pd.DataFrame":
+        import pandas as pd
+
+        response = self.post(
+            f"/instances/{instance_id}/pool_manager",
+            {
+                "agent_hash": agent_hash,
+                "request": request_payload,
+            },
+        )
+        return pd.DataFrame(response["tilemap"])
+
+
+class LevelStreamBuffer:
+    """Client-side queue of generated levels, refilled from pool_manager."""
+
+    def __init__(
+        self,
+        api_client: WorldGenerationApiClient,
+        instance_id: str,
+        agent_hash: str,
+        request_payload: dict,
+        prefetch_levels: int,
+    ):
+        self.api_client = api_client
+        self.instance_id = instance_id
+        self.agent_hash = agent_hash
+        self.request_payload = request_payload
+        self.prefetch_levels = max(1, int(prefetch_levels))
+        self._queue = deque()
+
+    def refill(self, min_size: int = 1) -> None:
+        target = max(int(min_size), self.prefetch_levels)
+        while len(self._queue) < target:
+            self._queue.append(
+                self.api_client.fetch_next_level(
+                    self.instance_id,
+                    self.agent_hash,
+                    self.request_payload,
+                )
+            )
+
+    def pop_next(self) -> "pd.DataFrame":
+        if not self._queue:
+            self.refill(min_size=1)
+        return self._queue.popleft()
+
+    def size(self) -> int:
+        return len(self._queue)
+
+
+def _append_level_to_env(env: Any, level_chunk: "pd.DataFrame") -> int:
+    """Append a tile chunk to the active environment map and spawn its goombas."""
+    import numpy as np
+
     try:
-        with urlopen(request) as response:
-            return json.load(response)
-    except HTTPError as exc:
-        message = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"API request failed: {exc.code} {exc.reason} {message}")
-    except URLError as exc:
-        raise RuntimeError(f"API connection failed: {exc.reason}")
+        from .tilemap import parse_tilemap
+        from .entities import Goomba
+        from .constants import TILE_SIZE, GOOMBA_W
+    except ImportError:
+        from tilemap import parse_tilemap
+        from entities import Goomba
+        from constants import TILE_SIZE, GOOMBA_W
 
+    gs = env._gs
+    chunk_tm = parse_tilemap(level_chunk)
+    current_tm = gs.tilemap
+    source_tm = gs.tilemap_source
+    col_offset = current_tm.width
 
-def _fetch_level_from_pool_manager(
-    api_base_url: str,
-    instance_id: str,
-    agent_hash: str,
-    request_payload: dict
-) -> "pandas.DataFrame":
-    """Fetch a new level from the pool manager API."""
-    import pandas as pd
-    url = f"{api_base_url}/instances/{instance_id}/pool_manager"
-    response = _api_post(url, {
-        "agent_hash": agent_hash,
-        "request": request_payload,
-    })
-    return pd.DataFrame(response["tilemap"])
+    target_h = max(current_tm.height, chunk_tm.height)
 
+    def _pad_rows(tiles: np.ndarray, height: int) -> np.ndarray:
+        if tiles.shape[0] >= height:
+            return tiles
+        pad = np.zeros((height - tiles.shape[0], tiles.shape[1]), dtype=tiles.dtype)
+        return np.vstack([tiles, pad])
 
-def _create_map_elite_instance(
-    api_base_url: str,
-    function: str = "Performance",
-    alphas: list = None,
-    variety_domains: list = None,
-    grid_points: list = None,
-) -> str:
-    """Create a new Map Elite instance and return its ID."""
-    if alphas is None:
-        alphas = [0.0, 0.1, 1.0]
-    if variety_domains is None:
-        variety_domains = ["calculate_slope", "colliders_score"]
-    if grid_points is None:
-        grid_points = [[0, 0.5], [0, 1]]
-    
-    url = f"{api_base_url}/instances"
-    response = _api_post(url, {
-        "function": function,
-        "alphas": alphas,
-        "variety_domains": variety_domains,
-        "grid_points": grid_points,
-    })
-    return response["instance_id"]
+    left_tiles = _pad_rows(current_tm.tiles, target_h)
+    right_tiles = _pad_rows(chunk_tm.tiles, target_h)
+    combined_tiles = np.hstack([left_tiles, right_tiles]).astype(np.int8, copy=False)
+    combined_spawns = list(current_tm.enemy_spawns) + [
+        (col + col_offset, row) for (col, row) in chunk_tm.enemy_spawns
+    ]
 
+    for tm in (current_tm, source_tm):
+        tm.tiles = combined_tiles.copy() if tm is source_tm else combined_tiles
+        tm.enemy_spawns = list(combined_spawns)
+        tm.width = combined_tiles.shape[1]
+        tm.height = combined_tiles.shape[0]
 
-def _generate_mapping(
-    api_base_url: str,
-    instance_id: str,
-    example_code: list = None,
-    level_len: int = 40,
-    batch_size: int = 5,
-    epochs: int = 10,
-) -> None:
-    """Initialize mapping generation for a Map Elite instance."""
-    if example_code is None:
-        example_code = ["1-1"]
-    
-    url = f"{api_base_url}/instances/{instance_id}/generate_mapping"
-    _api_post(url, {
-        "example_code": example_code,
-        "Level_Len": level_len,
-        "module": level_len,
-        "batch_size": batch_size,
-        "epochs": epochs,
-    })
+    for (col, row) in chunk_tm.enemy_spawns:
+        x = (col + col_offset) * TILE_SIZE + (TILE_SIZE - GOOMBA_W) // 2
+        y = row * TILE_SIZE
+        gs.goombas.append(Goomba(x=float(x), y=float(y), vx=0.0))
+
+    return chunk_tm.width
 
 
 def run(
-    map_path: Optional[Union[str, "pandas.DataFrame"]] = None,
+    map_path: Optional[Union[str, "pd.DataFrame"]] = None,
     fps: int = FPS,
     infinite_mode: bool = False,
     api_base_url: Optional[str] = None,
     instance_id: Optional[str] = None,
     agent_hash: Optional[str] = None,
     pool_request_payload: Optional[dict] = None,
+    prefetch_levels: int = 3,
+    append_trigger_tiles: int = 16,
 ) -> None:
     try:
         import pygame
@@ -129,6 +230,10 @@ def run(
 
     from env import MarioEnv
     from metrics import MetricsTracker
+    from constants import TILE_SIZE
+
+    api_client: Optional[WorldGenerationApiClient] = None
+    level_stream: Optional[LevelStreamBuffer] = None
 
     # Validate infinite mode requirements
     if infinite_mode:
@@ -144,35 +249,43 @@ def run(
                 "batch_size": 1,
                 "epochs": 10,
             }
-        
+        api_client = WorldGenerationApiClient(api_base_url)
+
+        print("Waiting for world generation API...")
+        try:
+            api_client.wait_until_ready()
+            print("✓ API ready")
+        except RuntimeError as e:
+            print(f"✗ Failed to reach API: {e}")
+            sys.exit(1)
+
         # Create instance if not provided
         if not instance_id:
             print("Creating new Map Elite instance...")
             try:
-                instance_id = _create_map_elite_instance(api_base_url)
+                instance_id = api_client.create_instance()
                 print(f"✓ Instance created: {instance_id}")
-                
+
                 # Generate mapping for the instance
                 print("Generating level mappings (this may take a moment)...")
-                _generate_mapping(
-                    api_base_url,
-                    instance_id,
-                    example_code=pool_request_payload.get("example_code", ["3-2"]),
-                    level_len=pool_request_payload.get("Level_Len", 40),
-                    batch_size=pool_request_payload.get("batch_size", 5),
-                    epochs=pool_request_payload.get("epochs", 10),
-                )
+                api_client.generate_mapping(instance_id, pool_request_payload)
                 print(f"✓ Mappings generated")
             except RuntimeError as e:
                 print(f"✗ Failed to create/initialize instance: {e}")
                 sys.exit(1)
-        
-        # Fetch initial level
+
+        # Fetch initial level and prefetch the stream queue.
         try:
-            print("Fetching initial level...")
-            current_map = _fetch_level_from_pool_manager(
-                api_base_url, instance_id, agent_hash, pool_request_payload
+            level_stream = LevelStreamBuffer(
+                api_client=api_client,
+                instance_id=instance_id,
+                agent_hash=agent_hash,
+                request_payload=pool_request_payload,
+                prefetch_levels=prefetch_levels,
             )
+            print("Fetching initial stream batch...")
+            level_stream.refill(min_size=prefetch_levels)
+            current_map = level_stream.pop_next()
             print(f"✓ Level loaded from instance {instance_id}")
         except RuntimeError as e:
             print(f"✗ Failed to fetch level: {e}")
@@ -191,6 +304,7 @@ def run(
     episode = 0
     total_steps = 0
     levels_completed = 0
+    tiles_appended = 0
 
     print("=" * 50)
     mode_info = " (Infinite Runner)" if infinite_mode else ""
@@ -227,6 +341,25 @@ def run(
         tracker.record(action_idx, reward, info)
         total_steps += 1
 
+        if infinite_mode:
+            mario_col = int(env._gs.mario.cx // TILE_SIZE)
+            remaining_tiles = env._gs.tilemap.width - mario_col
+            if remaining_tiles <= max(4, append_trigger_tiles):
+                try:
+                    if level_stream.size() <= 1:
+                        print("  → Refilling level stream buffer...")
+                        level_stream.refill(min_size=prefetch_levels)
+                    next_chunk = level_stream.pop_next()
+                    added = _append_level_to_env(env, next_chunk)
+                    tiles_appended += added
+                    levels_completed += 1
+                    print(
+                        f"  → Appended chunk #{levels_completed} "
+                        f"(+{added} tiles, total_width={env._gs.tilemap.width})"
+                    )
+                except RuntimeError as e:
+                    print(f"  ⚠ Failed to append next level chunk: {e}")
+
         if done or trunc:
             ep_rec = tracker.end_episode(info)
             status = "WON 🎉" if ep_rec.won else ("TRUNCATED" if trunc else "DIED 💀")
@@ -236,30 +369,19 @@ def run(
                   f"coins={ep_rec.coins}  "
                   f"max_x={ep_rec.max_x:.0f}")
 
-            if infinite_mode and ep_rec.won:
-                # Fetch next level from pool manager
-                try:
-                    print(f"  → Fetching next level from pool manager...")
-                    current_map = _fetch_level_from_pool_manager(
-                        api_base_url, instance_id, agent_hash, pool_request_payload
-                    )
-                    levels_completed += 1
-                    print(f"  → Level {levels_completed} loaded")
-                    env.close()
-                    env = MarioEnv(map_path=current_map, obs_mode="rgb",
-                                 render_mode="human", fps=fps)
-                except RuntimeError as e:
-                    print(f"  ⚠ Failed to fetch level: {e}")
-                    print(f"  → Restarting current level")
+            if infinite_mode:
+                # Keep the continuous world; only reset on death/truncation.
+                obs, _ = env.reset()
+            else:
+                obs, _ = env.reset()
 
-            obs, _ = env.reset()
             tracker.new_episode()
             episode += 1
 
     env.close()
     print(f"\nTotal episodes: {episode}   Total steps: {total_steps}")
     if infinite_mode:
-        print(f"Levels completed: {levels_completed}")
+        print(f"Appended chunks: {levels_completed}   Added tiles: {tiles_appended}")
     tracker.print_summary()
     save = input("Save replay? [y/N] ").strip().lower()
     if save == "y":
@@ -282,6 +404,10 @@ def main() -> None:
                         help="Level length for pool manager requests (default: %(default)s)")
     parser.add_argument("--batch-size", type=int, default=1,
                         help="Batch size for pool manager requests (default: %(default)s)")
+    parser.add_argument("--prefetch-levels", type=int, default=3,
+                        help="How many chunks to prefetch and keep buffered (default: %(default)s)")
+    parser.add_argument("--append-trigger-tiles", type=int, default=16,
+                        help="Append next chunk when <= N tiles remain ahead (default: %(default)s)")
     args = parser.parse_args()
 
     if args.infinite:
@@ -298,6 +424,8 @@ def main() -> None:
             instance_id=args.instance_id,
             agent_hash=args.agent_hash,
             pool_request_payload=pool_request_payload,
+            prefetch_levels=args.prefetch_levels,
+            append_trigger_tiles=args.append_trigger_tiles,
             fps=args.fps,
         )
     else:
