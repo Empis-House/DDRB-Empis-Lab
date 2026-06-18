@@ -49,8 +49,13 @@ class RandomAgent:
 
 class RightAgent:
     """Always walk right — sanity-check baseline."""
+    def __init__(self, right_action: int = 1, run_right_action: int = 6):
+        self.right_action = int(right_action)
+        self.run_right_action = int(run_right_action)
+
     def act(self, obs: np.ndarray) -> int:
-        return 1  # RIGHT
+        # Prefer run-right when available to use expanded move set.
+        return self.run_right_action if self.run_right_action >= 0 else self.right_action
 
 
 class RightJumpAgent:
@@ -62,10 +67,20 @@ class RightJumpAgent:
     jumps proactively.  Otherwise it uses periodic timed jumps.
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        right_action: int = 1,
+        right_jump_action: int = 4,
+        run_right_action: int = 6,
+        run_right_jump_action: int = 7,
+    ):
         self._t = 0
         self._jump_cooldown = 0
         self._jump_every = 40   # periodic jump interval (fallback)
+        self.right_action = int(right_action)
+        self.right_jump_action = int(right_jump_action)
+        self.run_right_action = int(run_right_action)
+        self.run_right_jump_action = int(run_right_jump_action)
 
     def act(self, obs: np.ndarray) -> int:
         self._t += 1
@@ -126,23 +141,37 @@ class RightJumpAgent:
 
             if should_jump and self._jump_cooldown == 0 and on_ground:
                 self._jump_cooldown = 28
-                return 7   # RUN_RIGHT_JUMP
+                if self.run_right_jump_action >= 0:
+                    return self.run_right_jump_action
+                return self.right_jump_action
 
-            return 6   # RUN_RIGHT
+            if self.run_right_action >= 0:
+                return self.run_right_action
+            return self.right_action
 
         # ── fallback: tile / rgb obs ──────────────────────────────────────
         if self._jump_cooldown == 0 and self._t % self._jump_every < 4:
             self._jump_cooldown = 28
-            return 4   # RIGHT_JUMP
-        return 1   # RIGHT
+            return self.right_jump_action
+        return self.right_action
 
 
 class SmartHeuristicAgent:
     """Lightweight heuristic player agent that avoids gaps and obstacles."""
 
-    def __init__(self):
+    def __init__(
+        self,
+        right_action: int = 1,
+        right_jump_action: int = 4,
+        run_right_action: int = 6,
+        run_right_jump_action: int = 7,
+    ):
         self._t = 0
         self._jump_cooldown = 0
+        self.right_action = int(right_action)
+        self.right_jump_action = int(right_jump_action)
+        self.run_right_action = int(run_right_action)
+        self.run_right_jump_action = int(run_right_jump_action)
 
     def act(self, obs: np.ndarray) -> int:
         self._t += 1
@@ -229,14 +258,18 @@ class SmartHeuristicAgent:
 
             if should_jump and self._jump_cooldown == 0 and on_ground:
                 self._jump_cooldown = 24
-                return 7   # RUN_RIGHT_JUMP
+                if self.run_right_jump_action >= 0:
+                    return self.run_right_jump_action
+                return self.right_jump_action
 
-            return 6   # RUN_RIGHT
+            if self.run_right_action >= 0:
+                return self.run_right_action
+            return self.right_action
 
         if self._jump_cooldown == 0 and self._t % 30 < 4:
             self._jump_cooldown = 24
-            return 4   # RIGHT_JUMP
-        return 1   # RIGHT
+            return self.right_jump_action
+        return self.right_action
 
 
 # ── Runner ────────────────────────────────────────────────────────────────────
@@ -277,11 +310,25 @@ def run(
     from env import MarioEnv, N_ACTIONS, ACTION_MAP
     from metrics import MetricsTracker
 
+    def _resolve_action(controls: dict, default: int = -1) -> int:
+        for idx, mapped in enumerate(ACTION_MAP):
+            if mapped == controls:
+                return idx
+        return default
+
     if batch_size <= 0:
         batch_size = 1
 
     if env is None and map_path is None:
         raise ValueError("Either map_path or env must be provided.")
+
+    if agent_name == "torch_dqn" and obs_mode != "rgb":
+        if verbose:
+            print(
+                f"[Agent] torch_dqn requires pixel observations. "
+                f"Overriding obs_mode '{obs_mode}' -> 'rgb'."
+            )
+        obs_mode = "rgb"
 
     render_mode = "human" if render or render_last else "rgb_array" if obs_mode == "rgb" else None
 
@@ -310,23 +357,46 @@ def run(
 
     # Agent selection
     training_agent = False
+    act_right = _resolve_action({"right": True}, default=1)
+    act_right_jump = _resolve_action({"right": True, "jump": True}, default=4)
+    act_run_right = _resolve_action({"right": True, "run": True}, default=6)
+    act_run_right_jump = _resolve_action({"right": True, "run": True, "jump": True}, default=7)
+
     if agent_name == "random":
         agent = RandomAgent(N_ACTIONS)
     elif agent_name == "right":
-        agent = RightAgent()
+        agent = RightAgent(
+            right_action=act_right,
+            run_right_action=act_run_right,
+        )
     elif agent_name == "right_jump":
-        agent = RightJumpAgent()
+        agent = RightJumpAgent(
+            right_action=act_right,
+            right_jump_action=act_right_jump,
+            run_right_action=act_run_right,
+            run_right_jump_action=act_run_right_jump,
+        )
     elif agent_name == "smart_heuristic":
-        agent = SmartHeuristicAgent()
+        agent = SmartHeuristicAgent(
+            right_action=act_right,
+            right_jump_action=act_right_jump,
+            run_right_action=act_run_right,
+            run_right_jump_action=act_run_right_jump,
+        )
     elif agent_name in AGENT_MANAGER.list_agents():
+        agent_kwargs = {}
+        if agent_name == "tabular_q":
+            agent_kwargs = {
+                "alpha": alpha,
+                "gamma": gamma,
+                "epsilon": epsilon,
+                "epsilon_decay": epsilon_decay,
+                "min_epsilon": min_epsilon,
+            }
         agent = AGENT_MANAGER.create(
             agent_name,
             N_ACTIONS,
-            alpha=alpha,
-            gamma=gamma,
-            epsilon=epsilon,
-            epsilon_decay=epsilon_decay,
-            min_epsilon=min_epsilon,
+            **agent_kwargs,
         )
         training_agent = True
     else:
@@ -336,9 +406,11 @@ def run(
         )
 
     if training_agent:
+        resumed = bool(checkpoint_path and os.path.exists(checkpoint_path))
+        trace_tag = f"{agent_name}|persist:{'resume' if resumed else 'fresh'}"
         if checkpoint_path and os.path.exists(checkpoint_path):
             if verbose:
-                print(f"[Agent] Resuming from checkpoint: {checkpoint_path}")
+                print(f"[Agent:{trace_tag}] Resuming from checkpoint: {checkpoint_path}")
             agent = RLAgent.load(checkpoint_path)
             # Validate loaded agent action size against environment
             try:
@@ -357,12 +429,12 @@ def run(
 
         training_environment = env_provider if env_provider is not None else env
         if verbose:
-            print(f"[Agent] Training agent: {agent_name}")
-            print(f"[Agent] Episodes: {n_episodes}, Batch size: {batch_size}")
+            print(f"[Agent:{trace_tag}] Training agent: {agent_name}")
+            print(f"[Agent:{trace_tag}] Episodes: {n_episodes}, Batch size: {batch_size}")
             if history_path:
-                print(f"[Agent] History path: {history_path}")
+                print(f"[Agent:{trace_tag}] History path: {history_path}")
             if checkpoint_path:
-                print(f"[Agent] Checkpoint path: {checkpoint_path}")
+                print(f"[Agent:{trace_tag}] Checkpoint path: {checkpoint_path}")
         training_history = run_training_loop(
             training_environment,
             agent,
@@ -375,10 +447,11 @@ def run(
             history_path=history_path,
             checkpoint_path=checkpoint_path,
             debug=debug,
+            trace_tag=trace_tag,
         )
         if hasattr(env, "close"):
             env.close()
-        return {"history": training_history}
+        return {"trace_tag": trace_tag, "history": training_history}
 
     tracker = MetricsTracker(keep_steps=True)
     t_start = time.time()
@@ -467,6 +540,7 @@ def analyse_replay(replay_path: str) -> None:
           f"max={rewards.max():.3f}")
 
     print("\n  Action distribution:")
+    
     for a in range(len(action_names)):
         frac = np.mean(actions == a)
         bar = "█" * int(frac * 40)

@@ -130,6 +130,7 @@ class MarioEnv(gym.Env):
         self._renderer: Optional[Renderer] = None
         if render_mode in ("human", "rgb_array"):
             self._renderer = Renderer(headless=(render_mode == "rgb_array"))
+        self._auto_render = render_mode == "human"
 
         # ── Spaces ────────────────────────────────────────────────────────────
         self.action_space = spaces.Discrete(N_ACTIONS)
@@ -186,11 +187,15 @@ class MarioEnv(gym.Env):
         result = self._gs.step(acts)
         obs = self._make_obs()
 
-        if self.render_mode == "human" and self._renderer:
+        if self.render_mode == "human" and self._renderer and getattr(self, "_auto_render", True):
             self._renderer.draw(self._gs)
             self._renderer.flip(self.fps)
 
         return obs, result.reward, result.done, result.truncated, result.info
+
+    def set_auto_render(self, enabled: bool) -> None:
+        """Enable or disable automatic rendering inside step()."""
+        self._auto_render = bool(enabled)
 
     def render(self) -> Optional[np.ndarray]:
         """

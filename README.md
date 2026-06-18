@@ -84,6 +84,39 @@ Built-in agents:
 - `right_jump` - move right and jump over obstacles.
 - learning agents registered in `mario_rl_env.ml_agents` such as `tabular_q`.
 
+## Adding a new Player AI agent
+
+To add a new agent, extend the `mario_rl_env.ml_agents.RLAgent` class and register it with the built-in agent manager.
+
+1. Create a new agent class in `mario_rl_env/ml_agents.py` (or another module imported by it):
+
+   - implement `act(self, obs: np.ndarray) -> int`
+   - optionally override `reset()`, `observe(...)`, `attach_env(...)`, `save(...)`, or `load(...)`
+   - use `action_size` to match the environment action space
+
+2. Register the new agent with `AGENT_MANAGER`:
+
+   ```python
+   AGENT_MANAGER.register(
+       "my_agent",
+       lambda action_size, **kwargs: MyAgent(action_size, **kwargs),
+   )
+   ```
+
+3. If the agent is meant for training, `run_agent.py` will automatically support it when you pass `--agent my_agent`.
+
+4. For a non-training heuristic agent, add a branch to the agent selection block in `mario_rl_env/run_agent.py` and include the new name
+
+### System conditions and runtime behavior
+
+- `mario_rl_env/run_agent.py` distinguishes between:
+  - built-in heuristic agents: `random`, `right`, `right_jump`, `smart_heuristic`
+  - registered training agents: any name returned by `AGENT_MANAGER.list_agents()`
+- Training agents receive the `action_size` argument and optional hyperparameters by name.
+- The CLI passes `--alpha`, `--gamma`, `--epsilon`, `--epsilon-decay`, and `--min-epsilon` to registered agents when created.
+- If `--save-agent` points to an existing checkpoint, the agent is loaded from disk and its `action_size` is validated against the environment. If the agent supports `resize_action_space()`, the code will adjust it automatically.
+- The environment uses a fixed `N_ACTIONS` action space, so custom agents should honor that value or provide a compatible resizing method.
+
 ## Notes
 
 - The environment exposes a Gymnasium-compatible API, so it is easy to integrate with RL libraries like Stable-Baselines3.
