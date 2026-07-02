@@ -10,5 +10,15 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy only the world_generation package into the container
 COPY world_generation /app/world_generation
 
+# Copy the level maps needed by Data_Preprocessing to build the structures
+COPY Super_Mario_Brothers_Maps /app/Super_Mario_Brothers_Maps
+
+# Persist generated level instances, agent history, and model checkpoints.
+VOLUME ["/app/world_generation/instances", "/app/history", "/app/checkpoints"]
+
 EXPOSE 8000
+
+# Default command: run the FastAPI server.
+# Override with `python -m world_generation.main` for terminal testing:
+#   docker run --rm <image> python -m world_generation.main --check-only
 CMD ["uvicorn", "world_generation.API:app", "--host", "0.0.0.0", "--port", "8000"]

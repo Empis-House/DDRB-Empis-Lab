@@ -10,10 +10,7 @@ Overview
 Usage
 -----
   # Minimal – required arguments only
-  python run_search.py 1-1 1-2 3-1 --level-len 200 \
-      --alphas '[0.2, 0.5, 0.8]' \
-      --variety-domains '["landings", "slope"]' \
-      --grid-points '[[0,0.5,1], [0,0.5,1]]'
+  python run_search.py 1-1 1-2 3-1 --level-len 200 \ --alphas '[0.2, 0.5, 0.8]' \ --variety-domains '["landings", "slope"]' \ --grid-points '[[0,0.5,1], [0,0.5,1]]'
 
   # With chunking module and output file
   python run_search.py 1-1 2-1 --level-len 400 \

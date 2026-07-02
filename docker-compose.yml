@@ -8,6 +8,8 @@ services:
     volumes:
       - ./world_generation/instances:/app/world_generation/instances
       - ./Super_Mario_Brothers_Maps:/app/Super_Mario_Brothers_Maps
+      - ./history:/app/history
+      - ./checkpoints:/app/checkpoints
     environment:
       - PYTHONUNBUFFERED=1
     healthcheck:

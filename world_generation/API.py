@@ -6,36 +6,50 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
+import pandas as pd
 
 from .Map_Grammars_Elite import Map_Elite
-from .Performance_Evaluation import Performance
-from .Variety_Domains import calculate_slope, colliders_score, landings_score
+from .Data_Preprocessing import load_structures_df as _load_structures_df
+from .Performance_Evaluation import (
+    Performance,
+    get_performance_model_status,
+    performance,
+    train_performance_predictor,
+    update_agent_history,
+)
+from .Variety_Domains import (
+    athletic_domain_score,
+    overworld_domain_score,
+    underground_domain_score,
+)
 
 app = FastAPI(title="World Generation API", version="1.0")
 
 _FUNCTION_MAP = {
     "Performance": Performance,
+    "performance": performance,
 }
 
 _VARIETY_MAP = {
-    "calculate_slope": calculate_slope,
-    "landings_score": landings_score,
-    "colliders_score": colliders_score,
+    "overworld": overworld_domain_score,
+    "underground": underground_domain_score,
+    "athletic": athletic_domain_score,
 }
 
 _map_elite_registry: Dict[str, Map_Elite] = {}
 _instance_id_counter = itertools.count(1)
+_structures_df: Optional[pd.DataFrame] = None
 
 
 class MapEliteCreateRequest(BaseModel):
     function: str = Field("Performance", description="Evaluation function to use")
     alphas: List[float] = Field([0.0], description="Target alpha values")
     variety_domains: List[str] = Field(
-        default_factory=list,
+        default_factory=lambda: ["overworld", "underground", "athletic"],
         description="Names of variety-domain functions to apply",
     )
     grid_points: List[List[float]] = Field(
-        default_factory=list,
+        default_factory=lambda: [[0.0, 0.5, 1.0], [0.0, 0.5, 1.0], [0.0, 0.5, 1.0]],
         description="Grid points used by the map elites search",
     )
 
@@ -83,6 +97,32 @@ class PoolManagerResponse(BaseModel):
     tilemap: List[List[Any]]
 
 
+class PerformanceHistoryRequest(BaseModel):
+    agent_id: str
+    history: List[Dict[str, Any]] = Field(default_factory=list)
+    append: bool = True
+
+
+class PerformanceTrainRequest(BaseModel):
+    epochs: Optional[int] = None
+    history_window: Optional[int] = None
+
+
+class PerformancePredictRequest(BaseModel):
+    level: Any
+    agent_id: Optional[str] = None
+    non_landing_weight: float = 5.0 / 3.0
+    clip: bool = True
+    history_window: int = 32
+    auto_train: bool = True
+
+
+class PerformancePredictResponse(BaseModel):
+    score: float
+    agent_id: Optional[str] = None
+    used_model: bool
+
+
 def _resolve_function(name: str):
     if name not in _FUNCTION_MAP:
         raise HTTPException(status_code=400, detail=f"Unknown function '{name}'")
@@ -113,6 +153,18 @@ def _serialize_tilemap(tilemap: Any) -> List[List[Any]]:
         raise HTTPException(status_code=500, detail="Unsupported tilemap format")
 
 
+def _get_structures_df() -> pd.DataFrame:
+    global _structures_df
+    if _structures_df is not None:
+        return _structures_df
+
+    try:
+        _structures_df = _load_structures_df()
+        return _structures_df
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not load structures dataframe: {exc}")
+
+
 @app.on_event("startup")
 def create_instance_store() -> None:
     state_dir = Path(__file__).resolve().parent / "instances"
@@ -125,6 +177,11 @@ def read_root() -> Dict[str, Any]:
         "message": "World Generation API",
         "available_functions": list(_FUNCTION_MAP),
         "available_variety_domains": list(_VARIETY_MAP),
+        "performance_endpoints": [
+            "/performance/history",
+            "/performance/train",
+            "/performance/predict",
+        ],
         "instances": len(_map_elite_registry),
     }
 
@@ -239,4 +296,61 @@ def str_to_tilemap(payload: StrToTilemapRequest) -> Dict[str, Any]:
     instance = Map_Elite(Performance, alphas=[0.0])
     tilemap = instance.str_to_tilemap(payload.level)
     return {"tilemap": _serialize_tilemap(tilemap)}
+
+
+@app.post("/performance/history")
+def performance_history(payload: PerformanceHistoryRequest) -> Dict[str, Any]:
+    try:
+        update_agent_history(
+            agent_id=payload.agent_id,
+            history=payload.history,
+            append=payload.append,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not update history: {exc}")
+
+    return {
+        "status": "ok",
+        "agent_id": payload.agent_id,
+        "entries_received": len(payload.history),
+        "append": payload.append,
+    }
+
+
+@app.post("/performance/train")
+def performance_train(payload: PerformanceTrainRequest) -> Dict[str, Any]:
+    try:
+        result = train_performance_predictor(
+            epochs=payload.epochs,
+            history_window=payload.history_window,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not train performance model: {exc}")
+    return result
+
+
+@app.post("/performance/predict", response_model=PerformancePredictResponse)
+def performance_predict(payload: PerformancePredictRequest) -> PerformancePredictResponse:
+    df = _get_structures_df()
+    status = get_performance_model_status(agent_id=payload.agent_id)
+    try:
+        score = performance(
+            payload.level,
+            df=df,
+            non_landing_weight=payload.non_landing_weight,
+            clip=payload.clip,
+            agent_id=payload.agent_id,
+            history_window=payload.history_window,
+            auto_train=payload.auto_train,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Could not predict performance: {exc}")
+
+    return PerformancePredictResponse(
+        score=float(score),
+        agent_id=payload.agent_id,
+        used_model=bool(status.get("model_ready") and status.get("has_agent_history")),
+    )
 

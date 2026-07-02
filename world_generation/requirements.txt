@@ -1,0 +1,12 @@
+# Requirements for the world_generation Docker container.
+# Intentionally minimal: no GUI (pygame), no GPU-specific (cuda-python, numba),
+# no RL training stack (gymnasium, torchrl, tensordict).
+
+fastapi[standard]
+pandas
+numpy
+scipy
+torch
+torchvision
+pillow
+psutil

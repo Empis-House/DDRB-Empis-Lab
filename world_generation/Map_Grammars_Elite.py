@@ -58,8 +58,13 @@ class Map_Elite:
             self.__Opt_Values = np.ones(self.__N)
             self.__Optimal_strings = [""]*self.__N
 
-        # knowledge base
-        self.df = pd.read_csv(r'Super_Mario_Brothers_Maps/structures/Universal_Structures.txt')
+        # knowledge base – path resolved relative to this module so it works
+        # regardless of working directory (local dev, Docker, etc.)
+        _structures_path = Path(__file__).resolve().parent / "Universal_Structures.txt"
+        if not _structures_path.exists():
+            from .Data_Preprocessing import load_structures_df  # build on first use
+            load_structures_df(output_path=_structures_path)
+        self.df = pd.read_csv(_structures_path)
         dfnp = np.transpose(self.df.to_numpy())
         self.Knowledge = dfnp[3:]
 

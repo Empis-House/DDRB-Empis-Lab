@@ -82,9 +82,9 @@ class WorldGenerationApiClient:
         if alphas is None:
             alphas = [0.0, 0.1, 1.0]
         if variety_domains is None:
-            variety_domains = ["calculate_slope", "colliders_score"]
+            variety_domains = ["overworld", "underground", "athletic"]
         if grid_points is None:
-            grid_points = [[0, 0.5], [0, 1]]
+            grid_points = [[0.0, 0.5, 1.0], [0.0, 0.5, 1.0], [0.0, 0.5, 1.0]]
 
         response = self.post(
             "/instances",

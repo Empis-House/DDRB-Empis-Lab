@@ -368,7 +368,7 @@ class TorchDQNAgent(RLAgent):
         burnin: int = 10000,
         learn_every: int = 3,
         sync_every: int = 10000,
-        save_every: int = 500000,
+        save_every: int = 100000,
     ) -> None:
         super().__init__(action_size=action_size)
         

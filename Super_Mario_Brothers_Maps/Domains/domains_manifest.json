@@ -1,0 +1,23 @@
+{
+  "overworld": [
+    "mario-1-1.txt",
+    "mario-2-1.txt",
+    "mario-3-1.txt",
+    "mario-4-1.txt",
+    "mario-5-1.txt",
+    "mario-6-1.txt",
+    "mario-6-2.txt",
+    "mario-7-1.txt",
+    "mario-8-1.txt"
+  ],
+  "underground": [
+    "mario-1-2.txt",
+    "mario-4-2.txt"
+  ],
+  "athletic": [
+    "mario-1-3.txt",
+    "mario-3-3.txt",
+    "mario-5-3.txt",
+    "mario-6-3.txt"
+  ]
+}
