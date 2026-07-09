@@ -23,6 +23,7 @@ import os
 from pathlib import Path
 
 from ml_profiler import profile
+from level_formats import build_token_structure_lookup, level_string_to_tilemap
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -65,6 +66,7 @@ class Map_Elite:
             from .Data_Preprocessing import load_structures_df  # build on first use
             load_structures_df(output_path=_structures_path)
         self.df = pd.read_csv(_structures_path)
+        self._token_to_structure = build_token_structure_lookup(self.df)
         dfnp = np.transpose(self.df.to_numpy())
         self.Knowledge = dfnp[3:]
 
@@ -256,23 +258,10 @@ class Map_Elite:
         return np.concatenate([s.values for s in Level["token"]])
     
     def str_to_tilemap(self, Level):
-
-        if Level=="":
-            raise ValueError("empty str level is no plotable")
-        
         from Word_Stitching import Jumping_Fiasible_Word
 
-        #print(Jumping_Fiasible_Word(Level,knowledge = Knowledge))
-                
-        tilemap = pd.DataFrame(columns= ["{}".format(i) for i in range(14)])
-        for Key in list(Level):
-            new_row = list(list(self.df.loc[self.df["token"] == Key,"Structures" ])[0])
-            tilemap.loc[len(tilemap)] = new_row
-            
-            
-        tilemap = tilemap.transpose()
-
-        return tilemap
+        # print(Jumping_Fiasible_Word(Level,knowledge = Knowledge))
+        return level_string_to_tilemap(Level, self._token_to_structure)
 
     
     

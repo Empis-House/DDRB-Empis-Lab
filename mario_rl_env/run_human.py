@@ -113,7 +113,13 @@ class WorldGenerationApiClient:
         agent_hash: str,
         request_payload: dict,
     ) -> "pd.DataFrame":
-        import pandas as pd
+        try:
+            from world_generation.level_formats import rows_to_tilemap
+        except ImportError:
+            import pandas as pd
+
+            def rows_to_tilemap(rows):
+                return pd.DataFrame(rows)
 
         response = self.post(
             f"/instances/{instance_id}/pool_manager",
@@ -122,7 +128,7 @@ class WorldGenerationApiClient:
                 "request": request_payload,
             },
         )
-        return pd.DataFrame(response["tilemap"])
+        return rows_to_tilemap(response["tilemap"])
 
 
 class LevelStreamBuffer:

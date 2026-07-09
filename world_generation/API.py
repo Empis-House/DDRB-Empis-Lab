@@ -10,6 +10,7 @@ import pandas as pd
 
 from .Map_Grammars_Elite import Map_Elite
 from .Data_Preprocessing import load_structures_df as _load_structures_df
+from .level_formats import tilemap_to_rows
 from .Performance_Evaluation import (
     Performance,
     get_performance_model_status,
@@ -146,11 +147,9 @@ def _get_instance(instance_id: str) -> Map_Elite:
 
 def _serialize_tilemap(tilemap: Any) -> List[List[Any]]:
     try:
-        return tilemap.values.tolist()
-    except AttributeError:
-        if isinstance(tilemap, list):
-            return tilemap
-        raise HTTPException(status_code=500, detail="Unsupported tilemap format")
+        return tilemap_to_rows(tilemap)
+    except TypeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
 
 
 def _get_structures_df() -> pd.DataFrame:

@@ -14,6 +14,7 @@ Usage
 """
 
 from __future__ import annotations
+import os
 import math
 from typing import Optional, Tuple
 
@@ -73,7 +74,13 @@ class Renderer:
         self._surface: Optional["pygame.Surface"] = None
         self._screen:  Optional["pygame.Surface"] = None
         self._font:    Optional["pygame.font.Font"] = None
+        self._font_small: Optional["pygame.font.Font"] = None
         self._clock    = None
+        self._window_scale: float = 1.7
+        self._hud_margin: int = 8
+        self._hud_height: int = 56
+        self._game_view_size: Tuple[int, int] = (SCREEN_W, SCREEN_H)
+        self._last_gs: Optional[GameState] = None
         self._initialised = False
 
     # ── Lifecycle ─────────────────────────────────────────────────────────────
@@ -90,11 +97,16 @@ class Renderer:
             os.environ.setdefault("SDL_AUDIODRIVER", "dummy")
 
         pygame.init()
+        self._window_scale = _read_window_scale()
         if not self.headless:
-            self._screen = pygame.display.set_mode((SCREEN_W, SCREEN_H))
+            window_w = max(1, int(SCREEN_W * self._window_scale))
+            game_h = max(1, int(SCREEN_H * self._window_scale))
+            window_h = game_h + self._hud_margin + self._hud_height + self._hud_margin
+            self._screen = pygame.display.set_mode((window_w, window_h), pygame.RESIZABLE)
             pygame.display.set_caption("Mario RL")
         self._surface = pygame.Surface((SCREEN_W, SCREEN_H))
-        self._font = pygame.font.SysFont("monospace", 14, bold=True)
+        self._font = pygame.font.SysFont("consolas", 15, bold=True)
+        self._font_small = pygame.font.SysFont("consolas", 13)
         self._clock = pygame.time.Clock()
         self._initialised = True
 
@@ -119,14 +131,25 @@ class Renderer:
         self._draw_tiles(surf, gs.tilemap, cam_x)
         self._draw_goombas(surf, gs.goombas, cam_x)
         self._draw_mario(surf, gs.mario, cam_x, gs.step_count)
-        self._draw_hud(surf, gs)
+        self._last_gs = gs
 
     def flip(self, fps: int = 60) -> None:
         """Blit surface → screen and tick clock."""
         if not self._initialised:
             return
         if not self.headless and self._screen is not None:
-            self._screen.blit(self._surface, (0, 0))
+            screen_w, screen_h = self._screen.get_size()
+            game_h = max(1, screen_h - (self._hud_margin + self._hud_height + self._hud_margin))
+            game_target = (screen_w, game_h)
+            self._game_view_size = game_target
+
+            if game_target == (SCREEN_W, SCREEN_H):
+                self._screen.blit(self._surface, (0, 0))
+            else:
+                scaled = pygame.transform.scale(self._surface, game_target)
+                self._screen.blit(scaled, (0, 0))
+
+            self._draw_hud_panel(self._screen)
             pygame.display.flip()
         if self._clock:
             self._clock.tick(fps)
@@ -235,18 +258,40 @@ class Renderer:
 
     # ── HUD ───────────────────────────────────────────────────────────────────
 
-    def _draw_hud(self, surf: "pygame.Surface", gs: GameState) -> None:
-        hud_h = 28
-        hud = pygame.Surface((SCREEN_W, hud_h))
-        hud.fill(COL_HUD_BG)
-        m = gs.mario
+    def _draw_hud_panel(self, screen: "pygame.Surface") -> None:
+        gs = self._last_gs
+        if gs is None:
+            return
 
-        text = (f"  SCORE:{m.score:06d}  COINS:{m.coins:02d}  "
-                f"KILLS:{m.kills:02d}  STEP:{gs.step_count:05d}  "
-                f"X:{int(m.x):04d}  STATE:{m.state.name}")
-        label = self._font.render(text, True, COL_WHITE)
-        hud.blit(label, (4, 6))
-        surf.blit(hud, (0, SCREEN_H - hud_h))
+        screen_w, _ = screen.get_size()
+        game_h = self._game_view_size[1]
+        panel_x = self._hud_margin
+        panel_y = game_h + self._hud_margin
+        panel_w = max(1, screen_w - 2 * self._hud_margin)
+        panel_h = self._hud_height
+
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
+        pygame.draw.rect(screen, COL_HUD_BG, panel_rect, border_radius=6)
+        pygame.draw.rect(screen, _darken(COL_WHITE, 0.4), panel_rect, width=1, border_radius=6)
+
+        m = gs.mario
+        level_goal_x = max(1, (gs.tilemap.width - 4) * TILE_SIZE)
+        progress_pct = max(0.0, min(100.0, (m.x / level_goal_x) * 100.0))
+
+        line_1 = (
+            f"SCORE:{m.score:06d}  COINS:{m.coins:02d}  KILLS:{m.kills:02d}  "
+            f"STEP:{gs.step_count:05d}  STATE:{m.state.name}"
+        )
+        line_2 = (
+            f"X:{int(m.x):04d}  Y:{int(m.y):03d}  VX:{m.vx:+5.2f}  VY:{m.vy:+6.2f}  "
+            f"G:{int(m.on_ground)}  GOOMBAS:{len(gs.goombas):02d}  "
+            f"R:{gs.total_reward:+8.2f}  PROG:{progress_pct:5.1f}%"
+        )
+
+        label_1 = self._font.render(line_1, True, COL_WHITE)
+        label_2 = self._font_small.render(line_2, True, COL_YELLOW)
+        screen.blit(label_1, (panel_x + 10, panel_y + 7))
+        screen.blit(label_2, (panel_x + 10, panel_y + 30))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -264,3 +309,13 @@ def _blit_char(surf: "pygame.Surface", char: str,
                           ty + (size - label.get_height()) // 2))
     except Exception:
         pass
+
+
+def _read_window_scale() -> float:
+    """Read optional renderer window scale from env var MARIO_WINDOW_SCALE."""
+    raw = os.environ.get("MARIO_WINDOW_SCALE", "1.7")
+    try:
+        value = float(raw)
+    except ValueError:
+        return 1.7
+    return max(1.0, min(value, 4.0))

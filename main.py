@@ -23,6 +23,7 @@ import itertools
 from statistics import mean
 
 from world_generation.tile_pattern_kl import compare_level_sets_tile_pattern_kl, load_level_set, domain_paths
+from world_generation.level_formats import rows_to_tilemap, tilemap_to_rows
 
 
 API_BASE_URL = "http://127.0.0.1:8000"
@@ -55,12 +56,12 @@ def api_post(path, payload):
         raise RuntimeError(f"API connection failed: {exc.reason}")
 
 
-example_codes = ["1-1"]
+example_codes = ["1-3", "3-3", "5-3"]
 level_len = 40
 module = level_len  # Temp: module != Level_Len could generate buged but solvable levels
 grid_points = [[0.0, 0.5, 1.0], [0.0, 0.5, 1.0], [0.0, 0.5, 1.0]]
 alphas = [0, 0.1, 1]  # These are the system acumulation points on the interval [0,1]
-DOMAIN_WINDOW = (2, 2)
+DOMAIN_WINDOW = (4, 4)
 DOMAIN_STRIDE = (1, 1)
 
 
@@ -222,10 +223,10 @@ def _format_agent_report(context, result):
         aggregate = {}
         for domain_name in domain_names:
             similarities = [entry["domains"][domain_name]["similarity"] for entry in variety_summaries if domain_name in entry.get("domains", {})]
-            jsds = [entry["domains"][domain_name]["jsd"] for entry in variety_summaries if domain_name in entry.get("domains", {})]
+            CoDs = [entry["domains"][domain_name]["CoD"] for entry in variety_summaries if domain_name in entry.get("domains", {})]
             aggregate[domain_name] = {
                 "mean_similarity": mean(similarities) if similarities else 0.0,
-                "mean_jsd": mean(jsds) if jsds else 0.0,
+                "mean_CoD": mean(CoDs) if CoDs else 0.0,
             }
         report["level_variety_aggregate"] = aggregate
 
@@ -266,7 +267,7 @@ def _print_agent_report(report):
             domain_bits = []
             for domain_name, domain_stats in entry.get("domains", {}).items():
                 domain_bits.append(
-                    f"{domain_name}=sim:{domain_stats['similarity']:.3f} jsd:{domain_stats['jsd']:.3f}"
+                    f"{domain_name}=sim:{domain_stats['similarity']:.3f} CoD:{domain_stats['CoD']:.3f}"
                 )
             print(f"  level {level_index}: closest={closest_domain} | " + "  ".join(domain_bits))
 
@@ -275,14 +276,14 @@ def _print_agent_report(report):
         for domain_name, stats in aggregate.items():
             print(
                 f"  {domain_name}: mean_similarity={stats['mean_similarity']:.3f} "
-                f"mean_jsd={stats['mean_jsd']:.3f}"
+                f"mean_CoD={stats['mean_CoD']:.3f}"
             )
 
     print("=" * 70 + "\n")
 
 
 def _build_level_variety_summary(level_frame, level_index, domain_cache):
-    level_grid = level_frame.values.tolist()
+    level_grid = tilemap_to_rows(level_frame)
     domain_summaries = {}
 
     for domain_name, domain_levels in domain_cache.items():
@@ -293,12 +294,12 @@ def _build_level_variety_summary(level_frame, level_index, domain_cache):
             stride=DOMAIN_STRIDE,
         )
         domain_summaries[domain_name] = {
-            "jsd": float(stats["jsd"]),
+            "CoD": float(stats["CoD"]),
             "kld_symmetric": float(stats["kld_symmetric"]),
-            "similarity": 1.0 / (1.0 + float(stats["jsd"])),
+            "similarity": 1.0 / (1.0 + float(stats["CoD"])),
         }
 
-    closest_domain = min(domain_summaries, key=lambda name: domain_summaries[name]["jsd"])
+    closest_domain = min(domain_summaries, key=lambda name: domain_summaries[name]["CoD"])
     return {
         "level_index": level_index,
         "closest_domain": closest_domain,
@@ -358,13 +359,13 @@ def main() -> None:
             },
         )
         level_counter += 1
-        level_frame = pd.DataFrame(response["tilemap"])
+        level_frame = rows_to_tilemap(response["tilemap"])
         try:
             summary = _build_level_variety_summary(level_frame, level_counter, cached_domain_levels)
             level_variety_summaries.append(summary)
             bits = []
             for domain_name, stats in summary["domains"].items():
-                bits.append(f"{domain_name}: sim={stats['similarity']:.3f} jsd={stats['jsd']:.3f}")
+                bits.append(f"{domain_name}: sim={stats['similarity']:.3f} CoD={stats['CoD']:.3f}")
             print(f"[Level Variety:{trace_tag}] level={level_counter} closest={summary['closest_domain']} | " + " | ".join(bits))
         except Exception as exc:
             print(f"[Level Variety:{trace_tag}] level={level_counter} summary unavailable: {exc}")
