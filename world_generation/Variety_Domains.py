@@ -94,10 +94,10 @@ def _domain_similarity_score(Level, df, domain_name: str) -> float:
     level_counts = tile_pattern_distribution([grid], window=_DOMAIN_WINDOW, stride=_DOMAIN_STRIDE)
     reference_counts = _domain_reference_counts(domain_name)
     p_probs, q_probs = _probability_vectors(reference_counts, level_counts, smoothing=_DOMAIN_SMOOTHING)
-    jsd = crossed_divergence(p_probs, q_probs)
+    CoD = crossed_divergence(p_probs, q_probs)
 
     # Similarity score in [0,1], where 1 means close to domain distribution.
-    return 1.0 / (1.0 + float(jsd))
+    return 1.0 / (1.0 + float(CoD))
 
 
 def overworld_domain_score(Level, df):

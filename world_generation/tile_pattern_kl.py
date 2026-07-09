@@ -7,6 +7,11 @@ from collections import Counter
 from pathlib import Path
 from typing import Dict, Iterable, List, Sequence, Tuple
 
+try:
+    from .level_formats import parse_level_line
+except ImportError:
+    from level_formats import parse_level_line
+
 
 Pattern = Tuple[str, ...]
 _MODULE_DIR = Path(__file__).resolve().parent
@@ -15,28 +20,12 @@ _DEFAULT_DOMAIN_ROOT = _PROJECT_ROOT / "Super_Mario_Brothers_Maps" / "Domains"
 _KNOWN_DOMAINS = ("overworld", "underground", "athletic")
 
 
-def _parse_level_line(line: str) -> List[str]:
-    """Parse one text row into tile tokens.
-
-    Supports both plain-char rows (legacy Mario txt files) and CSV-like rows
-    used by generated level exports.
-    """
-    raw = line.strip()
-    if not raw:
-        return []
-
-    if "," in raw:
-        return [token.strip() for token in raw.split(",") if token.strip()]
-
-    return list(raw)
-
-
 def load_level_grid(path: Path) -> List[List[str]]:
     """Load a level text file as a 2D tile grid [rows][cols]."""
     rows: List[List[str]] = []
     with path.open("r", encoding="utf-8") as fh:
         for line in fh:
-            parsed = _parse_level_line(line)
+            parsed = parse_level_line(line)
             if parsed:
                 rows.append(parsed)
 
@@ -179,7 +168,7 @@ def compare_level_sets_tile_pattern_kl(
 ) -> Dict[str, float]:
     """Mimic tile-pattern KL analysis between two level sets.
 
-    Returns forward/reverse KL and JSD to quantify distribution shift.
+    Returns forward/reverse KL and CoD to quantify distribution shift.
     """
     if not set_a:
         raise ValueError("set_a must contain at least one level")
@@ -192,7 +181,7 @@ def compare_level_sets_tile_pattern_kl(
 
     kld_a_to_b = kl_divergence(p, q)
     kld_b_to_a = kl_divergence(q, p)
-    jsd = crossed_divergence(p, q)
+    CoD = crossed_divergence(p, q)
 
     return {
         "patterns_set_a": sum(a_counts.values()),
@@ -201,7 +190,7 @@ def compare_level_sets_tile_pattern_kl(
         "kld_set_a_to_set_b": kld_a_to_b,
         "kld_set_b_to_set_a": kld_b_to_a,
         "kld_symmetric": 0.5 * (kld_a_to_b + kld_b_to_a),
-        "jsd": jsd,
+        "CoD": CoD,
     }
 
 

@@ -1,6 +1,11 @@
 # Official Python base image
 FROM python:3.12-slim
 
+ARG APP_VERSION=1.0.0
+LABEL org.opencontainers.image.title="ddrb-empis-lab-world-gen-api"
+LABEL org.opencontainers.image.version="${APP_VERSION}"
+ENV APP_VERSION=${APP_VERSION}
+
 WORKDIR /app
 
 # Install Python dependencies from the repository root
@@ -12,9 +17,6 @@ COPY world_generation /app/world_generation
 
 # Copy the level maps needed by Data_Preprocessing to build the structures
 COPY Super_Mario_Brothers_Maps /app/Super_Mario_Brothers_Maps
-
-# Persist generated level instances, agent history, and model checkpoints.
-VOLUME ["/app/world_generation/instances", "/app/history", "/app/checkpoints"]
 
 EXPOSE 8000
 
