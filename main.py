@@ -12,6 +12,7 @@ import json
 import os
 import time
 import argparse
+from datetime import datetime
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -19,6 +20,7 @@ from mario_rl_env.run_agent import run as agent_run
 from mario_rl_env.env import N_ACTIONS
 from mario_rl_env.ml_agents import AGENT_MANAGER, RLAgent
 import pandas as pd
+import numpy as np
 import itertools
 from statistics import mean
 
@@ -27,42 +29,211 @@ from world_generation.level_formats import rows_to_tilemap, tilemap_to_rows
 
 
 API_BASE_URL = "http://127.0.0.1:8000"
+LOG_USE_COLOR = True
+
+# Palette based on colorblind-friendly hues (Okabe-Ito inspired) mapped to ANSI 256 codes.
+ANSI_RESET = "\033[0m"
+ANSI_BOLD = "\033[1m"
+ANSI_DIM = "\033[2m"
+ANSI_BLUE = "\033[38;5;33m"
+ANSI_SKY = "\033[38;5;39m"
+ANSI_GREEN = "\033[38;5;35m"
+ANSI_ORANGE = "\033[38;5;214m"
+ANSI_MAGENTA = "\033[38;5;134m"
+ANSI_GRAY = "\033[38;5;245m"
 
 
-def wait_for_api(url: str, retries: int = 10, delay: float = 1.0) -> None:
+def _timestamp() -> str:
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _supports_color() -> bool:
+    if os.environ.get("NO_COLOR"):
+        return False
+    if os.environ.get("TERM", "").lower() == "dumb":
+        return False
+    return hasattr(__import__("sys").stdout, "isatty") and __import__("sys").stdout.isatty()
+
+
+def _paint(text: str, color: str = "", bold: bool = False, dim: bool = False) -> str:
+    if not LOG_USE_COLOR:
+        return text
+    prefix = ""
+    if dim:
+        prefix += ANSI_DIM
+    if bold:
+        prefix += ANSI_BOLD
+    if color:
+        prefix += color
+    return f"{prefix}{text}{ANSI_RESET}"
+
+
+def _scope_color(scope: str, message: str) -> str:
+    lowered = f"{scope} {message}".lower()
+    if "error" in lowered or "failed" in lowered:
+        return ANSI_ORANGE
+    if scope.startswith("api"):
+        return ANSI_SKY
+    if scope in {"training", "trace"}:
+        return ANSI_GREEN
+    if scope in {"vars", "report"}:
+        return ANSI_MAGENTA
+    if scope in {"run.config", "instance", "domains", "selftest"}:
+        return ANSI_BLUE
+    return ANSI_GRAY
+
+
+def _compact(value, max_len: int = 180) -> str:
+    if isinstance(value, (dict, list, tuple)):
+        text = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+    else:
+        text = str(value)
+    if len(text) <= max_len:
+        return text
+    return text[: max_len - 3] + "..."
+
+
+def _log(run_id: str, scope: str, message: str, quiet: bool = False, **fields) -> None:
+    if quiet:
+        return
+    ts = _paint(_timestamp(), dim=True)
+    run = _paint(f"run={run_id}", color=ANSI_BLUE)
+    scope_block = _paint(f"{scope:<12}", color=_scope_color(scope, message), bold=True)
+    msg_block = _paint(message, bold=True)
+    prefix = f"{ts} | {run} | {scope_block} | {msg_block}"
+    if fields:
+        # Multi-line field rendering keeps dense logs readable in narrow terminal panes.
+        if len(fields) >= 4:
+            print(prefix)
+            for key, value in fields.items():
+                key_block = _paint(f"{key:<14}", color=ANSI_GRAY)
+                print(f"    - {key_block}: {_compact(value)}")
+        else:
+            details = "  |  ".join(f"{_paint(k, color=ANSI_GRAY)}={_compact(v)}" for k, v in fields.items())
+            print(f"{prefix} | {details}")
+    else:
+        print(prefix)
+
+
+def _log_section(run_id: str, title: str, quiet: bool = False) -> None:
+    if quiet:
+        return
+    bar = _paint("=" * 90, color=ANSI_SKY)
+    print(f"\n{bar}")
+    header = f"{_paint(_timestamp(), dim=True)} | {_paint(f'run={run_id}', color=ANSI_BLUE)} | {_paint('SECTION', color=ANSI_SKY, bold=True):<12} | {_paint(title, color=ANSI_SKY, bold=True)}"
+    print(header)
+    print(bar)
+    print()
+
+
+def _log_general_variables(run_id: str, phase: str, quiet: bool = False) -> None:
+    _log(
+        run_id,
+        "vars",
+        f"general variables ({phase})",
+        quiet=quiet,
+        example_codes=example_codes,
+        level_len=level_len,
+        module=module,
+        grid_mode=grid_mode,
+        requested_grid_points=grid_points,
+        alphas=alphas,
+        domain_window=DOMAIN_WINDOW,
+        domain_stride=DOMAIN_STRIDE,
+    )
+
+
+def wait_for_api(url: str, retries: int = 10, delay: float = 1.0, run_id: str = "-", quiet: bool = False) -> None:
     for attempt in range(1, retries + 1):
         try:
             request = Request(url, headers={"Content-Type": "application/json"})
             with urlopen(request, timeout=5) as response:
                 if response.status == 200:
+                    _log(run_id, "api.wait", "API ready", quiet=quiet, url=url, attempt=attempt)
                     return
-        except Exception:
+        except Exception as exc:
             if attempt == retries:
+                _log(run_id, "api.wait", "API not reachable", quiet=quiet, url=url, attempt=attempt, error=exc)
                 raise
+            _log(run_id, "api.wait", "retrying API health check", quiet=quiet, url=url, attempt=attempt, retries=retries)
             time.sleep(delay)
 
 
-def api_post(path, payload):
+def api_post(path, payload, run_id: str = "-", trace_tag: str = "-", request_id: str = "-", quiet: bool = False):
     url = f"{API_BASE_URL}{path}"
     body = json.dumps(payload).encode("utf-8")
     request = Request(url, data=body, headers={"Content-Type": "application/json"})
+    started = time.perf_counter()
+    payload_keys = list(payload.keys()) if isinstance(payload, dict) else []
+    _log(
+        run_id,
+        "api.post",
+        "request",
+        quiet=quiet,
+        request_id=request_id,
+        trace=trace_tag,
+        path=path,
+        payload_keys=payload_keys,
+        payload_type=type(payload).__name__,
+    )
     try:
         with urlopen(request) as response:
-            return json.load(response)
+            result = json.load(response)
+            elapsed_ms = int((time.perf_counter() - started) * 1000)
+            _log(
+                run_id,
+                "api.post",
+                "response",
+                quiet=quiet,
+                request_id=request_id,
+                status=response.status,
+                elapsed_ms=elapsed_ms,
+                keys=list(result.keys()) if isinstance(result, dict) else type(result).__name__,
+            )
+            return result
     except HTTPError as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
         message = exc.read().decode("utf-8", errors="ignore")
+        _log(
+            run_id,
+            "api.post",
+            "http_error",
+            quiet=quiet,
+            request_id=request_id,
+            status=exc.code,
+            reason=exc.reason,
+            elapsed_ms=elapsed_ms,
+            body=message,
+        )
         raise RuntimeError(f"API request failed: {exc.code} {exc.reason} {message}")
     except URLError as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        _log(
+            run_id,
+            "api.post",
+            "connection_error",
+            quiet=quiet,
+            request_id=request_id,
+            reason=exc.reason,
+            elapsed_ms=elapsed_ms,
+        )
         raise RuntimeError(f"API connection failed: {exc.reason}")
 
+### variety aggregate:
+#  overworld: mean_similarity=0.691 mean_CoD=0.449
+#  underground: mean_similarity=0.644 mean_CoD=0.553
+#  athletic: mean_similarity=0.638 mean_CoD=0.569
 
-example_codes = ["1-3", "3-3", "5-3"]
+# '1-1','1-2','1-3','2-1','3-1','3-3','4-1','4-2','5-1','5-3','6-1','6-2','6-3','7-1','8-1'
+
+example_codes = ['1-1','1-2','1-3','2-1','3-1','3-3','4-1','4-2','5-1','5-3','6-1','6-2','6-3','7-1','8-1']
 level_len = 40
 module = level_len  # Temp: module != Level_Len could generate buged but solvable levels
-grid_points = [[0.0, 0.5, 1.0], [0.0, 0.5, 1.0], [0.0, 0.5, 1.0]]
+grid_points = [[0.4, 0.449, 0.49], [0.53, 0.553, 0.58], [0.53, 0.569, 0.59]]
+grid_mode = "percentile"
 alphas = [0, 0.1, 1]  # These are the system acumulation points on the interval [0,1]
-DOMAIN_WINDOW = (4, 4)
-DOMAIN_STRIDE = (1, 1)
+DOMAIN_WINDOW = (6, 6)
+DOMAIN_STRIDE = (3, 3)
 
 
 def test_agents() -> None:
@@ -151,6 +322,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-path", default="", help="Checkpoint path for trainable agents")
     parser.add_argument("--report-file", default="", help="Optional JSON file to save run report")
     parser.add_argument("--skip-self-tests", action="store_true", help="Skip startup agent/self persistence checks")
+    parser.add_argument("--quiet", action="store_true", help="Reduce custom logging output")
+    parser.add_argument("--no-color", action="store_true", help="Disable ANSI colors in logs")
     return parser.parse_args()
 
 
@@ -159,6 +332,32 @@ def _to_float(value, default=0.0):
         return float(value)
     except (TypeError, ValueError):
         return float(default)
+
+
+def _descriptive_stats(values):
+    if not values:
+        return {
+            "n": 0,
+            "min": 0.0,
+            "p25": 0.0,
+            "median": 0.0,
+            "mean": 0.0,
+            "p75": 0.0,
+            "max": 0.0,
+            "std": 0.0,
+        }
+
+    arr = np.asarray([_to_float(v) for v in values], dtype=float)
+    return {
+        "n": int(arr.size),
+        "min": float(np.min(arr)),
+        "p25": float(np.percentile(arr, 25)),
+        "median": float(np.median(arr)),
+        "mean": float(np.mean(arr)),
+        "p75": float(np.percentile(arr, 75)),
+        "max": float(np.max(arr)),
+        "std": float(np.std(arr)),
+    }
 
 
 def _summarize_training_history(history):
@@ -221,14 +420,27 @@ def _format_agent_report(context, result):
     if variety_summaries:
         domain_names = list(variety_summaries[0].get("domains", {}).keys())
         aggregate = {}
+        closest_counts = {}
+        for entry in variety_summaries:
+            closest = entry.get("closest_domain")
+            if closest:
+                closest_counts[closest] = closest_counts.get(closest, 0) + 1
+
         for domain_name in domain_names:
             similarities = [entry["domains"][domain_name]["similarity"] for entry in variety_summaries if domain_name in entry.get("domains", {})]
             CoDs = [entry["domains"][domain_name]["CoD"] for entry in variety_summaries if domain_name in entry.get("domains", {})]
+            klds = [entry["domains"][domain_name]["kld_symmetric"] for entry in variety_summaries if domain_name in entry.get("domains", {})]
             aggregate[domain_name] = {
-                "mean_similarity": mean(similarities) if similarities else 0.0,
-                "mean_CoD": mean(CoDs) if CoDs else 0.0,
+                "samples": len(similarities),
+                "similarity": _descriptive_stats(similarities),
+                "CoD": _descriptive_stats(CoDs),
+                "kld_symmetric": _descriptive_stats(klds),
             }
         report["level_variety_aggregate"] = aggregate
+        report["variety_overview"] = {
+            "levels_evaluated": len(variety_summaries),
+            "closest_domain_counts": closest_counts,
+        }
 
     return report
 
@@ -236,50 +448,92 @@ def _format_agent_report(context, result):
 def _print_agent_report(report):
     ctx = report.get("context", {})
     metrics = report.get("metrics", {})
-    variety_summaries = report.get("level_variety_summaries", [])
     aggregate = report.get("level_variety_aggregate", {})
+    overview = report.get("variety_overview", {})
+    run_id = ctx.get("run_id", "-")
 
-    print("\n" + "=" * 70)
-    print("AGENT RUN REPORT")
-    print("=" * 70)
-    print(f"agent: {ctx.get('agent_name')}")
-    print(f"mode: {report.get('mode')}")
-    print(f"episodes: {ctx.get('episodes')}  batch_size: {ctx.get('batch_size')}")
-    print(f"domain_descriptors: {ctx.get('variety_domains')}")
-    print(f"grid_points: {ctx.get('grid_points')}")
-    print(f"instance_id: {ctx.get('instance_id')}")
-    print("-" * 70)
+    _log_section(run_id, "FINAL REPORT", quiet=False)
+    _log(
+        run_id,
+        "report",
+        "run summary",
+        quiet=False,
+        agent=ctx.get("agent_name"),
+        mode=report.get("mode"),
+        episodes=ctx.get("episodes"),
+        batch_size=ctx.get("batch_size"),
+        instance_id=ctx.get("instance_id"),
+    )
+
+    requested_grid = ctx.get("requested_grid_points")
+    effective_grid = ctx.get("effective_grid_points")
+    if requested_grid == effective_grid:
+        _log(
+            run_id,
+            "report",
+            "grid configuration",
+            quiet=False,
+            grid_mode=ctx.get("grid_mode"),
+            effective_grid_points=effective_grid,
+        )
+    else:
+        _log(
+            run_id,
+            "report",
+            "grid configuration",
+            quiet=False,
+            grid_mode=ctx.get("grid_mode"),
+            requested_grid_points=requested_grid,
+            effective_grid_points=effective_grid,
+        )
 
     if report.get("mode") == "training":
-        print(f"episodes_seen: {metrics.get('episodes', 0)}")
-        print(f"reward mean/min/max: {metrics.get('mean_reward', 0.0):.3f} / {metrics.get('min_reward', 0.0):.3f} / {metrics.get('max_reward', 0.0):.3f}")
-        print(f"wins: {metrics.get('wins', 0)}  win_rate: {metrics.get('win_rate', 0.0):.2%}")
-        print(f"mean_steps: {metrics.get('mean_steps', 0.0):.1f}  mean_max_x: {metrics.get('mean_max_x', 0.0):.1f}")
+        _log(
+            run_id,
+            "report",
+            "training metrics",
+            quiet=False,
+            episodes_seen=metrics.get("episodes", 0),
+            reward_mean=round(metrics.get("mean_reward", 0.0), 3),
+            reward_min=round(metrics.get("min_reward", 0.0), 3),
+            reward_max=round(metrics.get("max_reward", 0.0), 3),
+            wins=metrics.get("wins", 0),
+            win_rate_pct=round(100.0 * metrics.get("win_rate", 0.0), 2),
+            mean_steps=round(metrics.get("mean_steps", 0.0), 1),
+            mean_max_x=round(metrics.get("mean_max_x", 0.0), 1),
+        )
     else:
-        print(json.dumps(metrics, indent=2))
+        _log(run_id, "report", "evaluation metrics", quiet=False, metrics=metrics)
 
-    if variety_summaries:
-        print("-" * 70)
-        print("level variety summaries:")
-        for entry in variety_summaries:
-            level_index = entry.get("level_index")
-            closest_domain = entry.get("closest_domain")
-            domain_bits = []
-            for domain_name, domain_stats in entry.get("domains", {}).items():
-                domain_bits.append(
-                    f"{domain_name}=sim:{domain_stats['similarity']:.3f} CoD:{domain_stats['CoD']:.3f}"
-                )
-            print(f"  level {level_index}: closest={closest_domain} | " + "  ".join(domain_bits))
-
-        print("-" * 70)
-        print("variety aggregate:")
+    if aggregate:
+        _log(
+            run_id,
+            "report",
+            "variety overview",
+            quiet=False,
+            levels_evaluated=overview.get("levels_evaluated", 0),
+            closest_domain_counts=overview.get("closest_domain_counts", {}),
+        )
         for domain_name, stats in aggregate.items():
-            print(
-                f"  {domain_name}: mean_similarity={stats['mean_similarity']:.3f} "
-                f"mean_CoD={stats['mean_CoD']:.3f}"
+            sim = stats.get("similarity", {})
+            cod = stats.get("CoD", {})
+            kld = stats.get("kld_symmetric", {})
+            _log(
+                run_id,
+                "report",
+                f"variety aggregate :: {domain_name}",
+                quiet=False,
+                samples=stats.get("samples", 0),
+                sim_mean=round(sim.get("mean", 0.0), 3),
+                sim_median=round(sim.get("median", 0.0), 3),
+                sim_std=round(sim.get("std", 0.0), 3),
+                sim_range=f"[{sim.get('min', 0.0):.3f}, {sim.get('max', 0.0):.3f}]",
+                cod_mean=round(cod.get("mean", 0.0), 3),
+                cod_median=round(cod.get("median", 0.0), 3),
+                cod_std=round(cod.get("std", 0.0), 3),
+                cod_iqr=f"[{cod.get('p25', 0.0):.3f}, {cod.get('p75', 0.0):.3f}]",
+                kld_mean=round(kld.get("mean", 0.0), 3),
             )
-
-    print("=" * 70 + "\n")
 
 
 def _build_level_variety_summary(level_frame, level_index, domain_cache):
@@ -308,7 +562,27 @@ def _build_level_variety_summary(level_frame, level_index, domain_cache):
 
 
 def main() -> None:
+    global LOG_USE_COLOR
     args = parse_args()
+    LOG_USE_COLOR = _supports_color() and not args.no_color
+    run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    main_started = time.perf_counter()
+    _log_section(run_id, "RUN START", quiet=args.quiet)
+    _log(
+        run_id,
+        "run.config",
+        "parsed arguments",
+        quiet=args.quiet,
+        agent=args.agent,
+        episodes=args.episodes,
+        batch_size=args.batch_size,
+        render=args.render,
+        render_last=args.render_last,
+        checkpoint_path=args.checkpoint_path or "<none>",
+        report_file=args.report_file or "<none>",
+        skip_self_tests=args.skip_self_tests,
+    )
+    _log_general_variables(run_id, phase="start", quiet=args.quiet)
 
     if not args.skip_self_tests:
         # Test available agents first
@@ -316,18 +590,46 @@ def main() -> None:
 
         # Test checkpoint persistence for torch_dqn
         test_checkpoint_persistence()
+    else:
+        _log(run_id, "selftest", "startup self tests skipped", quiet=args.quiet)
     
     # Original main flow with smart_heuristic
-    wait_for_api(f"{API_BASE_URL}/")
+    wait_for_api(f"{API_BASE_URL}/", run_id=run_id, quiet=args.quiet)
 
     create_payload = {
         "function": "Performance",
         "alphas": alphas,
         "variety_domains": ["overworld", "underground", "athletic"],
         "grid_points": grid_points,
+        "grid_mode": grid_mode,
     }
-    instance = api_post("/instances", create_payload)
+    api_sequence = 0
+
+    def next_request_id(prefix: str) -> str:
+        nonlocal api_sequence
+        api_sequence += 1
+        return f"{prefix}-{api_sequence:04d}"
+
+    bootstrap_trace = f"bootstrap|{run_id}"
+    instance = api_post(
+        "/instances",
+        create_payload,
+        run_id=run_id,
+        trace_tag=bootstrap_trace,
+        request_id=next_request_id("instances.create"),
+        quiet=args.quiet,
+    )
     instance_id = instance["instance_id"]
+    _log(run_id, "instance", "instance created", quiet=args.quiet, instance_id=instance_id)
+    _log(
+        run_id,
+        "grid",
+        "grid configuration resolved",
+        quiet=args.quiet,
+        mode=instance.get("grid_mode", create_payload["grid_mode"]),
+        requested=create_payload["grid_points"],
+        effective=instance.get("grid_points", create_payload["grid_points"]),
+    )
 
     generate_payload = {
         "example_code": example_codes,
@@ -336,8 +638,16 @@ def main() -> None:
         "batch_size": 5,
         "epochs": 10,
     }
-    generate_result = api_post(f"/instances/{instance_id}/generate_mapping", generate_payload)
+    generate_result = api_post(
+        f"/instances/{instance_id}/generate_mapping",
+        generate_payload,
+        run_id=run_id,
+        trace_tag=bootstrap_trace,
+        request_id=next_request_id("mapping.generate"),
+        quiet=args.quiet,
+    )
     domain_root_paths = domain_paths()
+    _log(run_id, "domains", "loading domain exemplars", quiet=args.quiet, domains=list(domain_root_paths.keys()))
     cached_domain_levels = {
         domain_name: load_level_set(domain_path, recursive=True)
         for domain_name, domain_path in domain_root_paths.items()
@@ -347,7 +657,7 @@ def main() -> None:
 
     has_checkpoint = bool(args.checkpoint_path and os.path.exists(args.checkpoint_path))
     persistence_mode = "resume" if has_checkpoint else "fresh"
-    trace_tag = f"{args.agent}|persist:{persistence_mode}"
+    trace_tag = f"run:{run_id}|agent:{args.agent}|persist:{persistence_mode}"
 
     def agent_runner():
         nonlocal level_counter
@@ -357,6 +667,10 @@ def main() -> None:
                 "agent_hash": trace_tag,
                 "request": generate_payload,
             },
+            run_id=run_id,
+            trace_tag=trace_tag,
+            request_id=next_request_id("pool.pull"),
+            quiet=args.quiet,
         )
         level_counter += 1
         level_frame = rows_to_tilemap(response["tilemap"])
@@ -366,12 +680,30 @@ def main() -> None:
             bits = []
             for domain_name, stats in summary["domains"].items():
                 bits.append(f"{domain_name}: sim={stats['similarity']:.3f} CoD={stats['CoD']:.3f}")
-            print(f"[Level Variety:{trace_tag}] level={level_counter} closest={summary['closest_domain']} | " + " | ".join(bits))
+            _log(
+                run_id,
+                "variety",
+                "level summary",
+                quiet=args.quiet,
+                trace=trace_tag,
+                level=level_counter,
+                closest=summary["closest_domain"],
+                stats=" | ".join(bits),
+            )
         except Exception as exc:
-            print(f"[Level Variety:{trace_tag}] level={level_counter} summary unavailable: {exc}")
+            _log(
+                run_id,
+                "variety",
+                "summary unavailable",
+                quiet=args.quiet,
+                trace=trace_tag,
+                level=level_counter,
+                error=exc,
+            )
         return level_frame
 
-    print(f"[Trace] tag={trace_tag}")
+    _log_section(run_id, "TRAINING START", quiet=args.quiet)
+    _log(run_id, "trace", "training trace initialized", quiet=args.quiet, trace_tag=trace_tag)
 
     result = agent_run(
         map_path=agent_runner,
@@ -380,17 +712,29 @@ def main() -> None:
         n_episodes=args.episodes,
         batch_size=args.batch_size,
         agent_name=args.agent,
-        verbose=True,
+        verbose=not args.quiet,
         checkpoint_path=args.checkpoint_path,
+    )
+    _log(
+        run_id,
+        "training",
+        "agent run finished",
+        quiet=args.quiet,
+        elapsed_s=round(time.perf_counter() - main_started, 2),
+        levels_requested=level_counter,
     )
 
     context = {
+        "run_id": run_id,
+        "trace_tag": trace_tag,
         "agent_name": args.agent,
         "episodes": args.episodes,
         "batch_size": args.batch_size,
         "instance_id": instance_id,
         "variety_domains": create_payload["variety_domains"],
-        "grid_points": create_payload["grid_points"],
+        "grid_mode": instance.get("grid_mode", create_payload["grid_mode"]),
+        "requested_grid_points": create_payload["grid_points"],
+        "effective_grid_points": instance.get("grid_points", create_payload["grid_points"]),
         "generate_status": generate_result.get("status") if isinstance(generate_result, dict) else None,
         "level_variety_summaries": level_variety_summaries,
     }
@@ -400,7 +744,11 @@ def main() -> None:
     if args.report_file:
         with open(args.report_file, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=2)
-        print(f"Saved report to: {args.report_file}")
+        _log(run_id, "report", "saved run report", quiet=args.quiet, path=args.report_file)
+
+    _log_general_variables(run_id, phase="end", quiet=args.quiet)
+
+    _log_section(run_id, "RUN END", quiet=args.quiet)
 
 
 

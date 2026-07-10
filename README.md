@@ -1,128 +1,242 @@
 # DDRB Empis Lab
 
-A research project for Super Mario Bros. level generation, evaluation, and reinforcement learning in a custom gymnasium-style environment.
+DDRB Empis Lab is a research workspace for Super Mario Bros. procedural content generation, level evaluation, and reinforcement learning. The repository combines a FastAPI-based world-generation service with a custom Gymnasium-style Mario environment for training, benchmarking, and human play.
 
-## Overview
+World generation architecture is an aplication of Dinamic Difficulty-Reward Balancing which is descripted on WorkPaper.md .
 
-This repository combines two main systems:
+## What this repository contains
 
-- `world_generation/`: A FastAPI-backed procedural generation pipeline for Mario-like levels using map elites and variety-domain evaluation.
-- `mario_rl_env/`: A custom Super Mario Bros.-style reinforcement learning environment with built-in baseline agents and support for training/evaluation.
+- `world_generation/`: Map-Elites style level generation, evaluation functions, diversity analysis, and the HTTP API.
+- `mario_rl_env/`: A pure-Python Mario environment with built-in heuristic and trainable agents.
+- `Super_Mario_Brothers_Maps/`: Source maps, processed maps, annotated paths, and generated output sets.
+- `main.py`: End-to-end example that requests levels from the API and runs an agent on them.
+- `PLAYME.md`: Quick start for launching the human-play mode.
 
-The root `main.py` file demonstrates how to use the world generation API to create level maps and then run a Mario RL agent on the generated levels.
+## Quick start
 
-## Repository structure
+Create a virtual environment and install the root dependencies.
 
-- `main.py` - Example runner that creates a world generation instance, generates levels, and runs an RL agent.
-- `requirements.txt` - Python dependency list.
-- `mario_rl_env/` - Mario RL environment package and agent infrastructure.
-  - `env.py` - Gymnasium-compatible Mario environment.
-  - `ml_agents.py` - Built-in agents and training loop support.
-  - `run_agent.py` - CLI entrypoint to execute agents on level maps.
-  - `history/` - Training history outputs.
-  - `checkpoints/` - Saved agent checkpoints.
-- `world_generation/` - World generation API and supporting algorithms.
-  - `API.py` - FastAPI service for creating map-elite instances and generating tilemaps.
-  - `Map_Grammars_Elite.py` - Core map-elite implementation.
-  - `Performance_Evaluation.py`, `Variety_Domains.py` - Evaluation and variety scoring.
-- `Super_Mario_Brothers_Maps/` - Stored map data and generated levels.
+### PowerShell
 
-## Requirements
-
-Install the Python dependencies from `requirements.txt`.
-
-```bash
+```powershell
+python -m venv .venv
+& .venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-The project expects a Python 3.12-compatible environment.
+### Bash
 
-## Running the world generation API
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
+```
 
-Start the FastAPI application from the repository root:
+## Main workflows
+
+### 1. Start the world-generation API
+
+The root `main.py` workflow expects the API to be running on `http://127.0.0.1:8000`.
 
 ```bash
 uvicorn world_generation.API:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Available endpoints:
-
-- `GET /` - API status and available functions.
-- `POST /instances` - Create a map elite generation instance.
-- `POST /instances/{instance_id}/generate_mapping` - Generate level mappings for an instance.
-- `POST /instances/{instance_id}/pool_manager` - Request a generated tilemap for an agent.
-- `POST /str_to_tilemap` - Convert a level string into a tilemap.
-
-## Example usage
-
-A typical workflow is:
-
-1. Start the FastAPI server.
-2. Create a generation instance with target evaluation and variety domains.
-3. Generate mappings for levels.
-4. Use `mario_rl_env.run_agent.run()` or `run_agent.py` to run an agent on the generated map.
-
-Example in `main.py`:
-
-- Creates a `Performance` instance with `alphas=[0.0, 0.1, 1]`.
-- Uses variety domains `calculate_slope` and `colliders_score`.
-- Generates a batch of levels.
-- Runs a tabular Q-learning agent with rendering enabled.
-
-## Running agents
-
-The `mario_rl_env` package supports both heuristic and learning agents.
+You can also start it with Docker Compose:
 
 ```bash
-python -m mario_rl_env.run_agent <map_path> --agent random --episodes 50
+docker compose up --build world-gen-api
 ```
 
-Built-in agents:
+Container versioning and editability:
 
-- `random` - uniform random actions.
-- `right` - always move right.
-- `right_jump` - move right and jump over obstacles.
-- learning agents registered in `mario_rl_env.ml_agents` such as `tabular_q`.
+- Set `WORLD_GEN_API_VERSION` in `.env` to control the local image tag used by Compose.
+- The `world_generation/` folder is bind-mounted into `/app/world_generation`, so code edits on the host are reflected in the running container.
+- The API runs with `--reload` in Compose for live-reload behavior during development.
 
-## Adding a new Player AI agent
+Core endpoints:
 
-To add a new agent, extend the `mario_rl_env.ml_agents.RLAgent` class and register it with the built-in agent manager.
+- `GET /`: health check plus available functions and variety domains
+- `POST /instances`: create a generation instance
+- `GET /instances`: list active instances
+- `GET /instances/{instance_id}`: inspect one instance
+- `POST /instances/{instance_id}/generate_mapping`: populate a search batch
+- `POST /instances/{instance_id}/pool_manager`: fetch a level tilemap for an agent
+- `POST /str_to_tilemap`: convert a serialized level string into a tilemap
+- `POST /performance/history`: append agent history for the performance model
+- `POST /performance/train`: train the performance predictor
+- `POST /performance/predict`: score a level with the performance model
 
-1. Create a new agent class in `mario_rl_env/ml_agents.py` (or another module imported by it):
+### 2. Run the integrated generation plus agent pipeline
 
-   - implement `act(self, obs: np.ndarray) -> int`
-   - optionally override `reset()`, `observe(...)`, `attach_env(...)`, `save(...)`, or `load(...)`
-   - use `action_size` to match the environment action space
+With the API running, execute the root runner:
 
-2. Register the new agent with `AGENT_MANAGER`:
+```bash
+python main.py --agent smart_heuristic --episodes 50 --batch-size 10
+```
 
-   ```python
-   AGENT_MANAGER.register(
-       "my_agent",
-       lambda action_size, **kwargs: MyAgent(action_size, **kwargs),
-   )
-   ```
+What `main.py` does:
 
-3. If the agent is meant for training, `run_agent.py` will automatically support it when you pass `--agent my_agent`.
+1. Waits for the API.
+2. Creates a `Performance` generation instance.
+3. Generates level mappings.
+4. Pulls levels from `pool_manager`.
+5. Runs the selected agent in `mario_rl_env`.
+6. Prints a report with run metrics and level-diversity summaries.
 
-4. For a non-training heuristic agent, add a branch to the agent selection block in `mario_rl_env/run_agent.py` and include the new name
+Supported agent names for `main.py`:
 
-### System conditions and runtime behavior
+- Heuristic agents: `random`, `right`, `right_jump`, `smart_heuristic`
+- Trainable agents: `tabular_q`, `torch_dqn`
 
-- `mario_rl_env/run_agent.py` distinguishes between:
-  - built-in heuristic agents: `random`, `right`, `right_jump`, `smart_heuristic`
-  - registered training agents: any name returned by `AGENT_MANAGER.list_agents()`
-- Training agents receive the `action_size` argument and optional hyperparameters by name.
-- The CLI passes `--alpha`, `--gamma`, `--epsilon`, `--epsilon-decay`, and `--min-epsilon` to registered agents when created.
-- If `--save-agent` points to an existing checkpoint, the agent is loaded from disk and its `action_size` is validated against the environment. If the agent supports `resize_action_space()`, the code will adjust it automatically.
-- The environment uses a fixed `N_ACTIONS` action space, so custom agents should honor that value or provide a compatible resizing method.
+Notes for trainable agents:
 
-## Notes
+- `tabular_q` uses the exposed Q-learning hyperparameters and works with feature-style observations.
+- `torch_dqn` is a PyTorch DDQN agent and is only registered when the PyTorch stack is installed successfully.
+- `torch_dqn` requires image observations; the runner automatically switches it to `rgb` mode when needed.
+- Existing checkpoint files are resumed automatically when passed through `--checkpoint-path` in `main.py` or `--save-agent` in `run_agent.py`.
 
-- The environment exposes a Gymnasium-compatible API, so it is easy to integrate with RL libraries like Stable-Baselines3.
-- The `Super_Mario_Brothers_Maps/` folder contains original and processed map data plus generated levels.
-- `main.py` is an example integration point; adjust payload values, agent settings, and checkpoint/history paths as needed.
+Useful options:
 
-## Contact
+- `--agent`: agent name to run
+- `--episodes`: number of episodes
+- `--batch-size`: episodes to run before regenerating levels
+- `--render`: render every episode
+- `--render-last`: render only the last episode in each batch
+- `--checkpoint-path`: resume a trainable agent from disk
+- `--report-file`: save the final report as JSON
+- `--skip-self-tests`: skip agent-load and checkpoint persistence checks
 
-This repository is maintained by the DDRB Empis Lab research project.
+### 3. Run an agent on an existing map
+
+To evaluate or train directly against a fixed map file, use the agent runner:
+
+```bash
+python -m mario_rl_env.run_agent Super_Mario_Brothers_Maps/generated_levels/Performance_opt=0.1.txt --agent right_jump --episodes 20
+```
+
+Built-in heuristic agents include:
+
+- `random`
+- `right`
+- `right_jump`
+- `smart_heuristic`
+
+Trainable agents registered through `AGENT_MANAGER` in `mario_rl_env/ml_agents.py`:
+
+- `tabular_q`: tabular Q-learning with `alpha`, `gamma`, `epsilon`, `epsilon_decay`, and `min_epsilon`
+- `torch_dqn`: PyTorch DDQN with CNN-based pixel input, replay buffer, target network syncing, and checkpoint persistence for model weights plus exploration state
+
+Example training commands:
+
+```bash
+python -m mario_rl_env.run_agent Super_Mario_Brothers_Maps/generated_levels/Performance_opt=0.1.txt --agent tabular_q --episodes 200 --history-file history/tabular_q_history.json --save-agent checkpoints/tabular_q.pkl
+
+python -m mario_rl_env.run_agent Super_Mario_Brothers_Maps/generated_levels/Performance_opt=0.1.txt --agent torch_dqn --episodes 200 --obs rgb --history-file history/agent_performance_history.json --save-agent checkpoints/performance_transformer.pt
+```
+
+Checkpoint behavior:
+
+- `--save-agent FILE` writes the trained agent checkpoint.
+- If `FILE` already exists, training resumes from it.
+- For `torch_dqn`, the checkpoint restores network weights, exploration rate, current step, and initialization parameters.
+
+Useful options:
+
+- `--obs features|features_layers|tiles|rgb`
+- `--render`
+- `--render-last`
+- `--save-csv`
+- `--save-replay`
+- `--history-file`
+- `--save-agent`
+- `--alpha`
+- `--gamma`
+- `--epsilon`
+- `--epsilon-decay`
+- `--min-epsilon`
+- `--analyse replay.json`
+
+### 4. Play as a human
+
+Standard mode on a fixed map:
+
+```bash
+python mario_rl_env/run_human.py Super_Mario_Brothers_Maps/generated_levels/Performance_opt=0.1.txt
+```
+
+Infinite mode backed by the API:
+
+```bash
+python mario_rl_env/run_human.py --infinite --api-url http://127.0.0.1:8000
+```
+
+Controls:
+
+- `Left` / `A`: move left
+- `Right` / `D`: move right
+- `Z` / `Space`: jump
+- `X` / `Shift`: run
+- `R`: restart
+- `Q` / `Esc`: quit
+
+## Diversity analysis
+
+The repository includes tile-pattern KL divergence utilities for comparing generated level distributions against a reference corpus.
+
+```bash
+python -m world_generation.tile_pattern_kl \
+  --set-a Super_Mario_Brothers_Maps/Original \
+  --set-b Super_Mario_Brothers_Maps/generated_levels/Performance \
+  --window 2 2 \
+  --stride 1 1
+```
+
+The command reports metrics such as:
+
+- `kld_set_a_to_set_b`
+- `kld_set_b_to_set_a`
+- `kld_symmetric`
+- `CoD`
+
+Use this when you want to quantify how far generated levels drift from the original level distribution.
+
+## Repository layout
+
+```text
+.
+├── main.py
+├── requirements.txt
+├── docker-compose.yml
+├── mario_rl_env/
+│   ├── env.py
+│   ├── ml_agents.py
+│   ├── run_agent.py
+│   ├── run_human.py
+│   └── README.md
+├── world_generation/
+│   ├── API.py
+│   ├── Map_Grammars_Elite.py
+│   ├── Performance_Evaluation.py
+│   ├── Variety_Domains.py
+│   ├── tile_pattern_kl.py
+│   └── instances/
+├── Super_Mario_Brothers_Maps/
+├── checkpoints/
+└── history/
+```
+
+## Outputs and artifacts
+
+- `checkpoints/`: saved trainable-agent checkpoints
+- `history/`: training histories and reports
+- `world_generation/instances/`: persisted generation-instance state
+- `results.json`: generated experiment output used by local analysis
+
+## Extending the project
+
+To add a new trainable agent, implement an `RLAgent` subclass and register it in `mario_rl_env.ml_agents.AGENT_MANAGER`. Once registered, it becomes available to `main.py` and `mario_rl_env/run_agent.py` by name.
+
+The environment is Gymnasium-compatible, so you can also integrate external RL libraries directly against `mario_rl_env.env`.
