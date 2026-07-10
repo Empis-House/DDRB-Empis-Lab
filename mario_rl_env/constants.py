@@ -15,7 +15,7 @@ SCREEN_H: int = TILE_SIZE * SCREEN_TILES_H   # 448 px
 
 # ── Simulation ─────────────────────────────────────────────────────────────────
 FPS: int = 60
-MAX_STEPS_PER_EPISODE: int = 5000   # truncation limit
+MAX_STEPS_PER_EPISODE: int = 500000   # truncation limit
 
 # ── Physics ───────────────────────────────────────────────────────────────────
 GRAVITY: float          = 0.50    # px / frame²
