@@ -150,13 +150,13 @@ def kl_divergence(p_probs: Sequence[float], q_probs: Sequence[float]) -> float:
     return value
 
 
-def crossed_divergence(p_probs: Sequence[float], q_probs: Sequence[float], w=0.5) -> float:
+def crossed_divergence(p_probs: Sequence[float], q_probs: Sequence[float], w=0.3) -> float:
     """Symmetric and finite divergence between two distributions."""
     if len(p_probs) != len(q_probs):
         raise ValueError("Probability vectors must have equal length")
 
     m = [(p + q) * 0.5 for p, q in zip(p_probs, q_probs)]
-    return w * kl_divergence(p_probs, m) + 1-w * kl_divergence(q_probs, m)
+    return w * kl_divergence(p_probs, m) + (1 - w) * kl_divergence(q_probs, m)
 
 
 def compare_level_sets_tile_pattern_kl(

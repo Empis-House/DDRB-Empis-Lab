@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import itertools
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -53,6 +53,10 @@ class MapEliteCreateRequest(BaseModel):
         default_factory=lambda: [[0.0, 0.5, 1.0], [0.0, 0.5, 1.0], [0.0, 0.5, 1.0]],
         description="Grid points used by the map elites search",
     )
+    grid_mode: Literal["fixed", "percentile"] = Field(
+        "fixed",
+        description="How grid points are interpreted when building the archive",
+    )
 
 
 class GenerateMappingRequest(BaseModel):
@@ -81,6 +85,7 @@ class MapEliteResponse(BaseModel):
     alphas: List[float]
     variety_domains: List[str]
     grid_points: List[List[float]]
+    grid_mode: str
     optimal_count: int = Field(0, description="Number of discovered level candidates")
     generation: int = Field(0, description="Current generation counter")
 
@@ -200,6 +205,7 @@ def create_map_elite(payload: MapEliteCreateRequest) -> MapEliteResponse:
         Variety_Domains=variety_functions,
         Grid_points=payload.grid_points,
         state_path=str(state_path),
+        grid_mode=payload.grid_mode,
     )
 
     _map_elite_registry[instance_id] = instance
@@ -210,6 +216,7 @@ def create_map_elite(payload: MapEliteCreateRequest) -> MapEliteResponse:
         alphas=instance.get_alphas(),
         variety_domains=instance.get_variety_domain_names(),
         grid_points=instance.get_grid_points(),
+        grid_mode=instance.get_grid_mode(),
         optimal_count=instance.get_optimal_count(),
         generation=instance.get_current_generation(),
     )
@@ -224,6 +231,7 @@ def list_instances() -> List[MapEliteResponse]:
             alphas=instance.get_alphas(),
             variety_domains=instance.get_variety_domain_names(),
             grid_points=instance.get_grid_points(),
+            grid_mode=instance.get_grid_mode(),
             optimal_count=instance.get_optimal_count(),
             generation=instance.get_current_generation(),
         )
@@ -240,6 +248,7 @@ def get_instance(instance_id: str) -> MapEliteResponse:
         alphas=instance.get_alphas(),
         variety_domains=instance.get_variety_domain_names(),
         grid_points=instance.get_grid_points(),
+        grid_mode=instance.get_grid_mode(),
         optimal_count=instance.get_optimal_count(),
         generation=instance.get_current_generation(),
     )

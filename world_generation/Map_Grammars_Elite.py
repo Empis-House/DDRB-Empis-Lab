@@ -32,7 +32,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 class Map_Elite:
     all = []
     
-    def __init__(self, function, alphas =[0], Variety_Domains = [], Grid_points =[], state_path=None):
+    def __init__(self, function, alphas =[0], Variety_Domains = [], Grid_points =[], state_path=None, grid_mode="fixed"):
         # function must acept a Level as input
         # fuction must have Image the real interval [0,1]
         # The Filtter will capting the optimal value (min)
@@ -41,11 +41,12 @@ class Map_Elite:
         self.__alphas = alphas
         self.__Variety_Domains = Variety_Domains
         self.__state_path = Path(state_path) if state_path else None
+        self.__grid_mode = grid_mode
         
         self.__Opt_Values = None
         self.__Optimal_strings = None
         
-        self.__Grid_points = Grid_points
+        self.__Grid_points = self.__normalize_grid_points(Grid_points, grid_mode)
         
         if not(self.__Variety_Domains):
             self.__Opt_Values = np.ones(self.__N)
@@ -91,6 +92,9 @@ class Map_Elite:
 
     def get_grid_points(self):
         return [list(point) for point in self.__Grid_points]
+
+    def get_grid_mode(self):
+        return self.__grid_mode
 
     def get_optimal_count(self):
         if not self.__Variety_Domains:
@@ -153,6 +157,26 @@ class Map_Elite:
     
     def __len__(self):
         return self.__N
+
+    def __normalize_grid_points(self, grid_points, grid_mode):
+        normalized_points = [list(point) for point in grid_points]
+
+        if grid_mode == "fixed":
+            return normalized_points
+
+        if grid_mode == "percentile":
+            percentile_points = []
+            for point in normalized_points:
+                if len(point) == 0:
+                    percentile_points.append([])
+                elif len(point) == 1:
+                    percentile_points.append([float(point[0])])
+                else:
+                    quantiles = np.linspace(0.0, 1.0, len(point) + 2)[1:-1]
+                    percentile_points.append(np.quantile(np.asarray(point, dtype=float), quantiles).tolist())
+            return percentile_points
+
+        raise ValueError(f"Unknown grid_mode '{grid_mode}'. Expected 'fixed' or 'percentile'.")
     
     def transform_lists_to_dict(self, lists, N):
         # Using itertools.product to get all combinations and converting to a list
