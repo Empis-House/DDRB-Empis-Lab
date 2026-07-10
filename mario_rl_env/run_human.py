@@ -249,7 +249,7 @@ def run(
             agent_hash = "human_player"
         if not pool_request_payload:
             pool_request_payload = {
-                "example_code": ["1-1"],
+                "example_code": ["1-1","1-2","4-2","5-1"],
                 "Level_Len": 40,
                 "module": 40,
                 "batch_size": 1,
