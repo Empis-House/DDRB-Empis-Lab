@@ -36,6 +36,7 @@ class Mario:
 
     state: MarioState = MarioState.SMALL
     invincible_frames: int = 0   # brief invincibility after taking damage
+    stomp_grace_frames: int = 0  # brief grace period after a stomp
 
     # statistics this episode
     coins: int = 0

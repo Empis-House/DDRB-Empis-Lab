@@ -3,8 +3,9 @@ tilemap.py – Parse a comma-separated .txt tile map into a numpy array.
 
 Tile legend (characters in the .txt file):
   -   AIR            (passable, empty)
+    o   COIN           (collectable, passable)
   X   GROUND         (solid)
-  S   BRICK          (solid, breakable by big Mario)
+    S/B/b BRICK        (solid, breakable by big Mario)
   Q   QUESTION BLOCK (solid, yields coin on first hit)
   ?   QUESTION BLOCK (same)
   E   ENEMY SPAWN    (Goomba spawn position; tile is AIR)
@@ -12,6 +13,8 @@ Tile legend (characters in the .txt file):
   >   PIPE_TOP_RIGHT (solid)
   [   PIPE_LEFT      (solid)
   ]   PIPE_RIGHT     (solid)
+    r/R/u/U RED PIPE   (solid)
+    v/V/w/W BLUE PIPE  (solid)
 """
 
 from __future__ import annotations
@@ -24,21 +27,33 @@ import pandas as pd
 
 class TileType(IntEnum):
     AIR            = 0
-    GROUND         = 1
-    BRICK          = 2
-    QUESTION       = 3
-    QUESTION_USED  = 4
-    PIPE_TOP_LEFT  = 5
-    PIPE_TOP_RIGHT = 6
-    PIPE_LEFT      = 7
-    PIPE_RIGHT     = 8
+    COIN           = 1
+    GROUND         = 2
+    BRICK          = 3
+    QUESTION       = 4
+    QUESTION_USED  = 5
+    PIPE_TOP_LEFT  = 6
+    PIPE_TOP_RIGHT = 7
+    PIPE_LEFT      = 8
+    PIPE_RIGHT     = 9
+    PIPE_RED_TOP_LEFT   = 10
+    PIPE_RED_TOP_RIGHT  = 11
+    PIPE_RED_LEFT       = 12
+    PIPE_RED_RIGHT      = 13
+    PIPE_BLUE_TOP_LEFT  = 14
+    PIPE_BLUE_TOP_RIGHT = 15
+    PIPE_BLUE_LEFT      = 16
+    PIPE_BLUE_RIGHT     = 17
 
 
 # Character → TileType mapping
 CHAR_TO_TILE: dict[str, TileType] = {
     '-': TileType.AIR,
+    'o': TileType.COIN,
     'X': TileType.GROUND,
     'S': TileType.BRICK,
+    'B': TileType.BRICK,
+    'b': TileType.BRICK,
     'Q': TileType.QUESTION,
     '?': TileType.QUESTION,
     'E': TileType.AIR,          # enemy spawn; handled separately
@@ -46,6 +61,14 @@ CHAR_TO_TILE: dict[str, TileType] = {
     '>': TileType.PIPE_TOP_RIGHT,
     '[': TileType.PIPE_LEFT,
     ']': TileType.PIPE_RIGHT,
+    'r': TileType.PIPE_RED_TOP_LEFT,
+    'R': TileType.PIPE_RED_TOP_RIGHT,
+    'u': TileType.PIPE_RED_LEFT,
+    'U': TileType.PIPE_RED_RIGHT,
+    'v': TileType.PIPE_BLUE_TOP_LEFT,
+    'V': TileType.PIPE_BLUE_TOP_RIGHT,
+    'w': TileType.PIPE_BLUE_LEFT,
+    'W': TileType.PIPE_BLUE_RIGHT,
 }
 
 SOLID_TILES: Set[TileType] = {
@@ -57,6 +80,14 @@ SOLID_TILES: Set[TileType] = {
     TileType.PIPE_TOP_RIGHT,
     TileType.PIPE_LEFT,
     TileType.PIPE_RIGHT,
+    TileType.PIPE_RED_TOP_LEFT,
+    TileType.PIPE_RED_TOP_RIGHT,
+    TileType.PIPE_RED_LEFT,
+    TileType.PIPE_RED_RIGHT,
+    TileType.PIPE_BLUE_TOP_LEFT,
+    TileType.PIPE_BLUE_TOP_RIGHT,
+    TileType.PIPE_BLUE_LEFT,
+    TileType.PIPE_BLUE_RIGHT,
 }
 
 # Tiles that yield a coin when hit from below
@@ -129,6 +160,14 @@ class TileMap:
         """
         t = self.get(col, row)
         if t == TileType.BRICK:
+            self.tiles[row, col] = TileType.AIR
+            return True
+        return False
+
+    def collect_coin(self, col: int, row: int) -> bool:
+        """Collect a free coin tile (o). Returns True when a coin was collected."""
+        t = self.get(col, row)
+        if t == TileType.COIN:
             self.tiles[row, col] = TileType.AIR
             return True
         return False

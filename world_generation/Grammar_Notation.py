@@ -100,6 +100,18 @@ class Graph:
 
     def __len__(self):
         return len(self.V)
+
+    def out_degree_map(self):
+        return {v: len(self.E[self.V.index(v)]) for v in self.V}
+
+    def in_degree_map(self):
+        indegree = {v: 0 for v in self.V}
+        for src in self.V:
+            for dst_word in self.Vertixes_of(src):
+                dst = dst_word.CloseKey()
+                if dst in indegree:
+                    indegree[dst] += 1
+        return indegree
     
 #Defining grammars
 #receives an exmaple level as a string and an optional list of pre made levels
@@ -129,6 +141,27 @@ class Grammar:
         
     def Knowledge(self):
         return self.___Knowledge
+
+    def out_degree_tokens(self, min_degree=2):
+        degree = max(0, int(min_degree))
+        out_map = self.__Graph.out_degree_map()
+        return [token for token, d in out_map.items() if d >= degree]
+
+    def in_degree_tokens(self, min_degree=2):
+        degree = max(0, int(min_degree))
+        in_map = self.__Graph.in_degree_map()
+        return [token for token, d in in_map.items() if d >= degree]
+
+    def inner_degree_tokens(self, min_degree=2):
+        """Tokens with both in-degree and out-degree >= min_degree."""
+        degree = max(0, int(min_degree))
+        out_map = self.__Graph.out_degree_map()
+        in_map = self.__Graph.in_degree_map()
+        return [
+            token
+            for token in self.__Graph.V
+            if in_map.get(token, 0) >= degree and out_map.get(token, 0) >= degree
+        ]
     
     #gets all possible grammars of len 2
     def Simple_words(self):
@@ -246,4 +279,41 @@ class Grammar:
                 New_Level = New_Level + Level_Piece
             New_Level = New_Level + self.N_Level_Generator(N%module,New_Level.CloseKey(),module=module)
             return New_Level
+
+    def N_Level_Generator_Constrained(self,
+                                      N,
+                                      from_key='',
+                                      allowed_end_keys=None,
+                                      seed=None,
+                                      module=10,
+                                      Gen_Game_mod=0,
+                                      max_attempts=256):
+        """Generate a feasible level with optional start and end token constraints."""
+        end_set = None
+        if allowed_end_keys is not None:
+            end_set = {k for k in allowed_end_keys if k in self.__Graph.V}
+            if not end_set:
+                end_set = None
+
+        if from_key and from_key not in self.__Graph.V:
+            raise ValueError(f"Invalid from_key '{from_key}' for current grammar graph")
+
+        max_attempts = max(1, int(max_attempts))
+        base_seed = None if seed is None else int(seed)
+
+        for attempt in range(max_attempts):
+            local_seed = None if base_seed is None else base_seed + attempt
+            candidate = self.N_Level_Generator(
+                N,
+                from_key=from_key,
+                seed=local_seed,
+                module=module,
+                Gen_Game_mod=Gen_Game_mod,
+            )
+            if end_set is None or candidate.CloseKey() in end_set:
+                return candidate
+
+        raise RuntimeError(
+            "Could not generate constrained level with requested start/end grammar tokens"
+        )
                 

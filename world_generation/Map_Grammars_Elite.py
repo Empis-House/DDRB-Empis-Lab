@@ -72,7 +72,7 @@ class Map_Elite:
         self.Knowledge = dfnp[3:]
 
         # Data Manager
-        self.__manager_memory    = {}         # { agent_hash: { 'strings': [...], 'generation': int } }
+        self.__manager_memory    = {}         # { agent_name: { 'strings': [...], 'generation': int } }
         self.__current_generation = 0         # monotonic counter; the "flag"
         self.__refresh_lock      = threading.Lock()
         if self.__state_path is not None:
@@ -112,6 +112,13 @@ class Map_Elite:
     def get_state_path(self):
         return str(self.__state_path) if self.__state_path is not None else None
 
+    def refresh_generated_mapping(self, clear_manager_memory=False, **request):
+        self.Generate_Mapping(**request)
+        self.__current_generation += 1
+        if clear_manager_memory:
+            self.__manager_memory = {}
+        self.__save_manager_state()
+
     def __manager_state_path(self):
         return str(self.__state_path) if self.__state_path is not None else None
 
@@ -124,14 +131,15 @@ class Map_Elite:
                 data = json.load(fh)
             self.__current_generation = int(data.get("generation", self.__current_generation))
             self.__manager_memory = {}
-            for agent_hash, payload in data.get("manager_memory", {}).items():
+            for agent_name, payload in data.get("manager_memory", {}).items():
                 strings = payload.get("strings", [])
                 generation = int(payload.get("generation", self.__current_generation))
                 if not isinstance(strings, list):
                     strings = []
-                self.__manager_memory[agent_hash] = {
+                self.__manager_memory[agent_name] = {
                     "strings": strings,
                     "generation": generation,
+                    "request_signature": payload.get("request_signature", ""),
                 }
         except Exception as exc:
             print(f"[Map_Elite] Warning: failed to load manager state from {path}: {exc}")
@@ -287,9 +295,57 @@ class Map_Elite:
         # print(Jumping_Fiasible_Word(Level,knowledge = Knowledge))
         return level_string_to_tilemap(Level, self._token_to_structure)
 
+    def __generate_constrained_level(self,
+                                     grammar,
+                                     level_len,
+                                     module,
+                                     game_mode,
+                                     start_token=None,
+                                     allowed_end_tokens=None,
+                                     seed=None,
+                                     max_attempts=256):
+        from Word_Stitching import Jumping_Fiasible_Word
+
+        sequence = grammar.N_Level_Generator_Constrained(
+            level_len,
+            from_key=(start_token or ''),
+            allowed_end_keys=allowed_end_tokens,
+            seed=seed,
+            module=module,
+            Gen_Game_mod=game_mode,
+            max_attempts=max_attempts,
+        )._Sequence
+
+        if not Jumping_Fiasible_Word(sequence, knowledge=self.Knowledge, Game_mod=game_mode):
+            raise RuntimeError("Constrained generator produced a non-feasible sequence")
+        return sequence
+
+    def __grammar_degree_sets(self, grammar, min_degree=2):
+        degree = max(1, int(min_degree))
+        start_tokens = grammar.inner_degree_tokens(min_degree=degree)
+        if not start_tokens:
+            start_tokens = grammar.out_degree_tokens(min_degree=degree)
+        end_tokens = grammar.out_degree_tokens(min_degree=degree)
+        if not end_tokens:
+            end_tokens = list(start_tokens)
+        return start_tokens, end_tokens
+
     
     
-    def Generate_Mapping(self,example_code, Level_Len, module=None, batch_size=1, epochs=256, seed=None,Game_Mode = 0, observability=False):
+    def Generate_Mapping(self,
+                         example_code,
+                         Level_Len,
+                         module=None,
+                         batch_size=1,
+                         epochs=256,
+                         seed=None,
+                         Game_Mode = 0,
+                         observability=False,
+                         use_grammar_degree_grid=False,
+                         grammar_min_degree=2,
+                         grammar_end_out_degree=2,
+                         grammar_bulk_repeats=1,
+                         grammar_max_attempts=256):
         if not(module):
             module = Level_Len
 
@@ -300,10 +356,50 @@ class Map_Elite:
         level_sec = self.Extract_Level_String([example_code[0]]) 
 
         G = Grammar(level_sec,knowledge = self.Knowledge)
-        pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
-        while not(Jumping_Fiasible_Word(pre_Level, knowledge = self.Knowledge, Game_mod=Game_Mode)):
+        start_tokens = []
+        end_tokens = []
+        if use_grammar_degree_grid:
+            start_tokens, end_tokens = self.__grammar_degree_sets(G, min_degree=grammar_min_degree)
+            enforced_end_tokens = G.out_degree_tokens(min_degree=max(1, int(grammar_end_out_degree)))
+            if enforced_end_tokens:
+                end_tokens = enforced_end_tokens
+
+        if use_grammar_degree_grid and start_tokens and end_tokens:
+            pre_Level = self.__generate_constrained_level(
+                grammar=G,
+                level_len=Level_Len,
+                module=module,
+                game_mode=Game_Mode,
+                start_token=start_tokens[0],
+                allowed_end_tokens=end_tokens,
+                seed=seed,
+                max_attempts=grammar_max_attempts,
+            )
+        else:
             pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
+            while not(Jumping_Fiasible_Word(pre_Level, knowledge = self.Knowledge, Game_mod=Game_Mode)):
+                pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
         self.Quest(pre_Level)
+
+        if use_grammar_degree_grid and start_tokens and end_tokens:
+            per_start_repeats = max(1, int(grammar_bulk_repeats))
+            for _ in range(per_start_repeats):
+                for start_token in start_tokens:
+                    try:
+                        seeded_level = self.__generate_constrained_level(
+                            grammar=G,
+                            level_len=Level_Len,
+                            module=module,
+                            game_mode=Game_Mode,
+                            start_token=start_token,
+                            allowed_end_tokens=end_tokens,
+                            seed=None if seed is None else int(seed) + len(start_token),
+                            max_attempts=grammar_max_attempts,
+                        )
+                        self.Quest(seeded_level)
+                    except RuntimeError:
+                        # Keep search robust when one start token is too restrictive.
+                        continue
 
 
         #fig = make_subplots(rows=1, cols=batch_size, subplot_titles=[f"Level {i}" for i in range(batch_size)])
@@ -315,11 +411,25 @@ class Map_Elite:
                 t=0
                 T=0
                 for i in range(epochs):
-                    pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
-                    T+=1
-                    while not(Jumping_Fiasible_Word(pre_Level, knowledge = self.Knowledge, Game_mod=Game_Mode)):
-                        T+=1
+                    if use_grammar_degree_grid and start_tokens and end_tokens:
+                        start_token = start_tokens[(i + j) % len(start_tokens)]
+                        pre_Level = self.__generate_constrained_level(
+                            grammar=G,
+                            level_len=Level_Len,
+                            module=module,
+                            game_mode=Game_Mode,
+                            start_token=start_token,
+                            allowed_end_tokens=end_tokens,
+                            seed=None if seed is None else int(seed) + i + (j * max(1, epochs)),
+                            max_attempts=grammar_max_attempts,
+                        )
+                        T += 1
+                    else:
                         pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
+                        T+=1
+                        while not(Jumping_Fiasible_Word(pre_Level, knowledge = self.Knowledge, Game_mod=Game_Mode)):
+                            T+=1
+                            pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
                     
                     t+=1
                     self.Quest(pre_Level)
@@ -356,6 +466,83 @@ class Map_Elite:
         
         return matches
 
+    def __request_signature(self, request):
+        compact = {
+            "mapping": self.__mapping_request(request),
+            "target_alpha": (request or {}).get("target_alpha") if isinstance(request, dict) else None,
+            "alpha_window_size": (request or {}).get("alpha_window_size") if isinstance(request, dict) else None,
+            "alpha_window": (request or {}).get("alpha_window") if isinstance(request, dict) else None,
+        }
+        try:
+            return json.dumps(compact, sort_keys=True, default=str)
+        except Exception:
+            return str(compact)
+
+    def __mapping_request(self, request):
+        if not isinstance(request, dict):
+            return {}
+
+        allowed_keys = {
+            "example_code",
+            "Level_Len",
+            "module",
+            "batch_size",
+            "epochs",
+            "seed",
+            "Game_Mode",
+            "observability",
+            "use_grammar_degree_grid",
+            "grammar_min_degree",
+            "grammar_end_out_degree",
+            "grammar_bulk_repeats",
+            "grammar_max_attempts",
+        }
+        return {key: request[key] for key in allowed_keys if key in request}
+
+    def __resolve_requested_alpha_indexes(self, request):
+        if self.__N <= 0:
+            return []
+
+        if not isinstance(request, dict):
+            return list(range(self.__N))
+
+        target_alpha = request.get("target_alpha")
+        if target_alpha is None:
+            return list(range(self.__N))
+
+        try:
+            target_alpha = float(target_alpha)
+        except (TypeError, ValueError):
+            return list(range(self.__N))
+
+        alpha_window = request.get("alpha_window")
+        if isinstance(alpha_window, (list, tuple)) and len(alpha_window) == 2:
+            try:
+                low = float(alpha_window[0])
+                high = float(alpha_window[1])
+            except (TypeError, ValueError):
+                low = high = target_alpha
+        else:
+            try:
+                width = max(0.0, float(request.get("alpha_window_size", 0.0)))
+            except (TypeError, ValueError):
+                width = 0.0
+            low = target_alpha - (width / 2.0)
+            high = target_alpha + (width / 2.0)
+
+        indexes = [
+            idx for idx, alpha in enumerate(self.__alphas)
+            if low <= float(alpha) <= high
+        ]
+        if indexes:
+            return indexes
+
+        nearest = min(
+            range(self.__N),
+            key=lambda idx: abs(float(self.__alphas[idx]) - target_alpha),
+        )
+        return [nearest]
+
     def Plot_Coordinate(self, cartesian_list, level_curves,level_name=None):
         conflictive_level_curves = [x for x in level_curves if x not in self.__alphas]
         for x in conflictive_level_curves: print(f"level curve {x} is not an acumulation point")
@@ -372,13 +559,13 @@ class Map_Elite:
                 except:
                     print(f"{near_x} might has no density in C = {self.__alphas[i]}")
 
-    def __extract_valid_levels(self):
+    def __extract_valid_levels(self, request=None):
+        indexes = self.__resolve_requested_alpha_indexes(request)
         if not self.__Variety_Domains:
-            return [s for s in self.__Optimal_strings if s != ""]
+            return [self.__Optimal_strings[i] for i in indexes if self.__Optimal_strings[i] != ""]
 
         import itertools
         cartesian_list = list(itertools.product(*self.__Grid_points))
-        indexes = self.find_exact_matches(self.__alphas)
         valid_levels = []
 
         for x in cartesian_list:
@@ -393,7 +580,7 @@ class Map_Elite:
         return
     
     
-    def pool_manager(self, agent_hash, request):
+    def pool_manager(self, agent_name, request):
         """Deliver pre-generated level strings/tilemap to RL agents.
  
         Each agent owns an isolated batch built from a snapshot of
@@ -402,26 +589,37 @@ class Map_Elite:
         exhausted in the same generation skips the call and just refills
         from the already-refreshed snapshot.
         """
+        agent_name = str(agent_name or "").strip()
+        if not agent_name:
+            raise ValueError("agent_name is required")
+        request_signature = self.__request_signature(request)
+        mapping_request = self.__mapping_request(request)
+        agent_state = self.__manager_memory.get(agent_name)
+
         # 1. Initialise agent batch on first visit or when batch is empty
-        if agent_hash not in self.__manager_memory or not self.__manager_memory[agent_hash]["strings"]:
-            strings = self.__extract_valid_levels()
+        if (
+            agent_state is None
+            or agent_state.get("request_signature") != request_signature
+            or not agent_state["strings"]
+        ):
+            strings = self.__extract_valid_levels(request)
             if not strings:
-                self.Generate_Mapping(**request)
-                self.__current_generation += 1
-                strings = self.__extract_valid_levels()
+                self.refresh_generated_mapping(clear_manager_memory=False, **mapping_request)
+                strings = self.__extract_valid_levels(request)
             if not strings:
                 raise RuntimeError("Pool manager could not produce any valid levels. Check Generate_Mapping parameters.")
-            self.__manager_memory[agent_hash] = {
+            self.__manager_memory[agent_name] = {
                 "strings": strings,
                 "generation": self.__current_generation,
+                "request_signature": request_signature,
             }
  
-        batch = self.__manager_memory[agent_hash]["strings"]
+        batch = self.__manager_memory[agent_name]["strings"]
         chosen = self.str_to_tilemap(batch.pop(random.randrange(len(batch))))
  
         # 2. Batch exhausted → replenish, generating new levels if needed
         if not batch:
-            agent_gen = self.__manager_memory[agent_hash]["generation"]
+            agent_gen = self.__manager_memory[agent_name]["generation"]
  
             # Fast path (no lock): another agent already bumped the generation
             # this cycle, so Generate_Mapping was already called.
@@ -434,16 +632,16 @@ class Map_Elite:
                 # second call deleting the first's output mid-write).
                 with self.__refresh_lock:
                     if agent_gen == self.__current_generation:
-                        self.Generate_Mapping(**request)    # one call per generation
-                        self.__current_generation += 1
+                        self.refresh_generated_mapping(clear_manager_memory=False, **mapping_request)    # one call per generation
  
             # Refill from __Optimal_strings — either just refreshed above
             # or already refreshed by a concurrent agent that won the lock.
-            self.__manager_memory[agent_hash] = {
-                "strings":    self.__extract_valid_levels(),
+            self.__manager_memory[agent_name] = {
+                "strings":    self.__extract_valid_levels(request),
                 "generation": self.__current_generation,
+                "request_signature": request_signature,
             }
-            batch = self.__manager_memory[agent_hash]["strings"]
+            batch = self.__manager_memory[agent_name]["strings"]
             if not batch:
                 raise RuntimeError("Pool manager could not produce any valid levels after regeneration.")
  

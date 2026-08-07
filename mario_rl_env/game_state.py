@@ -134,21 +134,29 @@ class GameState:
             move_goomba(g, self.tilemap)
 
         # ── Enemy interactions ────────────────────────────────────────────
+        stomped_any = False
         for g in self.goombas:
             result = check_mario_goomba(self.mario, g)
             if result == 'stomp':
                 g.state = GoombaState.SQUISHED
                 g.squish_timer = 15
                 g.vx = 0.0
-                self.mario.vy = BOUNCE_VY
                 self.mario.kills += 1
                 reward += REWARD_KILL_ENEMY
                 self.mario.score += 100
                 info['killed_goomba'] = True
-            elif result == 'hit':
-                self._damage_mario()
-                reward += REWARD_DEATH
-                info['took_damage'] = True
+                stomped_any = True
+
+        if stomped_any:
+            self.mario.vy = BOUNCE_VY
+            self.mario.stomp_grace_frames = max(self.mario.stomp_grace_frames, 8)
+        else:
+            for g in self.goombas:
+                if check_mario_goomba(self.mario, g) == 'hit':
+                    self._damage_mario()
+                    reward += REWARD_DEATH
+                    info['took_damage'] = True
+                    break
 
         # ── Remove dead goombas ───────────────────────────────────────────
         self.goombas = [g for g in self.goombas if g.state != GoombaState.DEAD]
@@ -159,6 +167,9 @@ class GameState:
             self.mario.score += 200
             reward += REWARD_COIN
             info['coin'] = True
+
+        if events.get('pipe_entry'):
+            info['pipe_entry'] = events['pipe_entry']
 
         # ── Pit / death ───────────────────────────────────────────────────
         if events['fell_pit']:

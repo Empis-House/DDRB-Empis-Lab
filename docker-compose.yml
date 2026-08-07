@@ -16,9 +16,9 @@ services:
       - ./checkpoints:/app/checkpoints
     environment:
       - PYTHONUNBUFFERED=1
+      - DDRB_DATA_ROOT=/app
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/"]
-      interval: 5s
       timeout: 3s
       retries: 5
       start_period: 10s

@@ -184,7 +184,13 @@ class MarioEnv(gym.Env):
         self, action: int
     ) -> Tuple[np.ndarray, float, bool, bool, dict]:
         acts = ACTION_MAP[int(action)]
-        result = self._gs.step(acts)
+        return self.step_with_actions(acts)
+
+    def step_with_actions(
+        self, actions: Dict[str, bool]
+    ) -> Tuple[np.ndarray, float, bool, bool, dict]:
+        """Step using a raw action dict (used by human controls/extensions)."""
+        result = self._gs.step(actions)
         obs = self._make_obs()
 
         if self.render_mode == "human" and self._renderer and getattr(self, "_auto_render", True):
@@ -196,6 +202,18 @@ class MarioEnv(gym.Env):
     def set_auto_render(self, enabled: bool) -> None:
         """Enable or disable automatic rendering inside step()."""
         self._auto_render = bool(enabled)
+
+    def set_hud_extra_line(self, text: str) -> None:
+        """Set optional extra HUD text when rendering in human/rgb modes."""
+        if self._renderer is None:
+            return
+        self._renderer.set_hud_extra_line(text)
+
+    def set_overlay_box_lines(self, lines: List[str]) -> None:
+        """Set top-right in-game overlay box lines for quick status visibility."""
+        if self._renderer is None:
+            return
+        self._renderer.set_overlay_box_lines(lines)
 
     def render(self) -> Optional[np.ndarray]:
         """

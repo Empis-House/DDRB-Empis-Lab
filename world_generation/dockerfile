@@ -8,6 +8,9 @@ ENV APP_VERSION=${APP_VERSION}
 
 WORKDIR /app
 
+# Install curl for healthchecks and Python dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 # Install Python dependencies from the repository root
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt

@@ -3,7 +3,9 @@ from world_generation.Word_Stitching import Jumping_Fiasible_Word
 from world_generation.Grammar_Notation import Grammar
 from world_generation.Performance_Evaluation import (
     Performance,
+    Performance_KL_Progression,
     performance,
+    performance_kl_progression,
     train_performance_predictor,
     update_agent_history,
 )
@@ -36,7 +38,9 @@ __all__ = [
     "Grammar",
     "Map_Elite",
     "Performance",
+    "Performance_KL_Progression",
     "performance",
+    "performance_kl_progression",
     "update_agent_history",
     "train_performance_predictor",
     "overworld_domain_score", "underground_domain_score", "athletic_domain_score",

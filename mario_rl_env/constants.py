@@ -4,7 +4,7 @@ Edit here to adjust physics, screen size, rewards, etc.
 """
 
 # ── Tile geometry ──────────────────────────────────────────────────────────────
-TILE_SIZE: int = 32          # pixels per tile (must match your renderer scale)
+TILE_SIZE: int = 64          # pixels per tile (must match your renderer scale)
 TILE_SIZE_F: float = float(TILE_SIZE)
 
 # ── Screen / viewport ─────────────────────────────────────────────────────────
@@ -18,13 +18,13 @@ FPS: int = 60
 MAX_STEPS_PER_EPISODE: int = 500000   # truncation limit
 
 # ── Physics ───────────────────────────────────────────────────────────────────
-GRAVITY: float          = 0.50    # px / frame²
-MAX_FALL_SPEED: float   = 12.0    # px / frame  (terminal velocity)
-MARIO_WALK_SPEED: float = 2.5     # px / frame
-MARIO_RUN_SPEED: float  = 4.5     # px / frame
-MARIO_JUMP_VY: float    = -12.5   # px / frame  (negative = upward)
-BOUNCE_VY: float        = -7.0    # when stomping an enemy
-GOOMBA_SPEED: float     = 1.2     # px / frame
+GRAVITY: float          = 0.025*TILE_SIZE_F    # px / frame²
+MAX_FALL_SPEED: float   = 0.38*TILE_SIZE_F    # px / frame  (terminal velocity)
+MARIO_WALK_SPEED: float = 0.08*TILE_SIZE_F    # px / frame
+MARIO_RUN_SPEED: float  = 0.15*TILE_SIZE_F     # px / frame
+MARIO_JUMP_VY: float    = -0.5*TILE_SIZE_F   # px / frame  (negative = upward)
+BOUNCE_VY: float        = -0.2*TILE_SIZE_F    # when stomping an enemy
+GOOMBA_SPEED: float     = 0.038*TILE_SIZE_F     # px / frame
 
 # ── Mario hitbox (fraction of tile) ──────────────────────────────────────────
 MARIO_W: int = int(TILE_SIZE * 0.75)   # 24 px
@@ -49,13 +49,18 @@ OBS_TILES_W: int = 16    # width of tile window centred on Mario
 OBS_TILES_H: int = 14    # height of tile window
 
 # ── Colours (RGB) ─────────────────────────────────────────────────────────────
-COL_SKY       = (107, 140, 255)
+COL_SKY       = (75, 195, 255)
 COL_GROUND    = (140,  80,  20)
 COL_BRICK     = (180, 100,  30)
 COL_QUESTION  = (250, 200,   0)
 COL_QUESTION_USED = (140, 100, 70)
+COL_COIN      = (252, 220,  40)
 COL_PIPE_DARK = ( 10, 130,  20)
 COL_PIPE_LITE = ( 50, 200,  60)
+COL_PIPE_RED_DARK = (180, 30, 30)
+COL_PIPE_RED_LITE = (220, 70, 70)
+COL_PIPE_BLUE_DARK = (25, 70, 170)
+COL_PIPE_BLUE_LITE = (65, 125, 235)
 COL_MARIO     = (220,  50,  20)
 COL_MARIO_HAT = (200,  30,   0)
 COL_MARIO_BIG = (200, 130,  60)

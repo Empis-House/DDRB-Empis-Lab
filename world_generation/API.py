@@ -13,6 +13,7 @@ from .Data_Preprocessing import load_structures_df as _load_structures_df
 from .level_formats import tilemap_to_rows
 from .Performance_Evaluation import (
     Performance,
+    Performance_KL_Progression,
     get_performance_model_status,
     performance,
     train_performance_predictor,
@@ -28,6 +29,7 @@ app = FastAPI(title="World Generation API", version="1.0")
 
 _FUNCTION_MAP = {
     "Performance": Performance,
+    "Performance_KL_Progression": Performance_KL_Progression,
     "performance": performance,
 }
 
@@ -68,10 +70,16 @@ class GenerateMappingRequest(BaseModel):
     seed: Optional[int] = None
     Game_Mode: int = 0
     observability: bool = False
+    use_grammar_degree_grid: bool = False
+    grammar_min_degree: int = 2
+    grammar_end_out_degree: int = 2
+    grammar_bulk_repeats: int = 1
+    grammar_max_attempts: int = 256
 
 
 class PoolManagerRequest(BaseModel):
-    agent_hash: str
+    agent_name: Optional[str] = None
+    agent_hash: Optional[str] = None
     request: Dict[str, Any]
 
 
@@ -99,12 +107,15 @@ class GenerateMappingResponse(BaseModel):
 
 class PoolManagerResponse(BaseModel):
     instance_id: str
-    agent_hash: str
+    agent_name: str
+    agent_hash: Optional[str] = None
+    generation: int
     tilemap: List[List[Any]]
 
 
 class PerformanceHistoryRequest(BaseModel):
-    agent_id: str
+    agent_name: Optional[str] = None
+    agent_id: Optional[str] = None
     history: List[Dict[str, Any]] = Field(default_factory=list)
     append: bool = True
 
@@ -116,6 +127,7 @@ class PerformanceTrainRequest(BaseModel):
 
 class PerformancePredictRequest(BaseModel):
     level: Any
+    agent_name: Optional[str] = None
     agent_id: Optional[str] = None
     non_landing_weight: float = 5.0 / 3.0
     clip: bool = True
@@ -125,8 +137,19 @@ class PerformancePredictRequest(BaseModel):
 
 class PerformancePredictResponse(BaseModel):
     score: float
+    agent_name: Optional[str] = None
     agent_id: Optional[str] = None
     used_model: bool
+
+
+def _resolve_agent_name(*names: Optional[str]) -> str:
+    for value in names:
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            return text
+    raise HTTPException(status_code=400, detail="agent_name is required")
 
 
 def _resolve_function(name: str):
@@ -270,7 +293,8 @@ def delete_instance(instance_id: str) -> Dict[str, Any]:
 @app.post("/instances/{instance_id}/generate_mapping", response_model=GenerateMappingResponse)
 def generate_mapping(instance_id: str, payload: GenerateMappingRequest) -> GenerateMappingResponse:
     instance = _get_instance(instance_id)
-    instance.Generate_Mapping(
+    instance.refresh_generated_mapping(
+        clear_manager_memory=True,
         example_code=payload.example_code,
         Level_Len=payload.Level_Len,
         module=payload.module,
@@ -279,6 +303,11 @@ def generate_mapping(instance_id: str, payload: GenerateMappingRequest) -> Gener
         seed=payload.seed,
         Game_Mode=payload.Game_Mode,
         observability=payload.observability,
+        use_grammar_degree_grid=payload.use_grammar_degree_grid,
+        grammar_min_degree=payload.grammar_min_degree,
+        grammar_end_out_degree=payload.grammar_end_out_degree,
+        grammar_bulk_repeats=payload.grammar_bulk_repeats,
+        grammar_max_attempts=payload.grammar_max_attempts,
     )
     return GenerateMappingResponse(
         status="generated",
@@ -291,10 +320,13 @@ def generate_mapping(instance_id: str, payload: GenerateMappingRequest) -> Gener
 @app.post("/instances/{instance_id}/pool_manager", response_model=PoolManagerResponse)
 def pool_manager(instance_id: str, payload: PoolManagerRequest) -> PoolManagerResponse:
     instance = _get_instance(instance_id)
-    tilemap = instance.pool_manager(payload.agent_hash, payload.request)
+    agent_name = _resolve_agent_name(payload.agent_name, payload.agent_hash)
+    tilemap = instance.pool_manager(agent_name, payload.request)
     return PoolManagerResponse(
         instance_id=instance_id,
-        agent_hash=payload.agent_hash,
+        agent_name=agent_name,
+        agent_hash=agent_name,
+        generation=instance.get_current_generation(),
         tilemap=_serialize_tilemap(tilemap),
     )
 
@@ -308,9 +340,10 @@ def str_to_tilemap(payload: StrToTilemapRequest) -> Dict[str, Any]:
 
 @app.post("/performance/history")
 def performance_history(payload: PerformanceHistoryRequest) -> Dict[str, Any]:
+    agent_name = _resolve_agent_name(payload.agent_name, payload.agent_id)
     try:
         update_agent_history(
-            agent_id=payload.agent_id,
+            agent_id=agent_name,
             history=payload.history,
             append=payload.append,
         )
@@ -321,7 +354,8 @@ def performance_history(payload: PerformanceHistoryRequest) -> Dict[str, Any]:
 
     return {
         "status": "ok",
-        "agent_id": payload.agent_id,
+        "agent_name": agent_name,
+        "agent_id": agent_name,
         "entries_received": len(payload.history),
         "append": payload.append,
     }
@@ -342,14 +376,17 @@ def performance_train(payload: PerformanceTrainRequest) -> Dict[str, Any]:
 @app.post("/performance/predict", response_model=PerformancePredictResponse)
 def performance_predict(payload: PerformancePredictRequest) -> PerformancePredictResponse:
     df = _get_structures_df()
-    status = get_performance_model_status(agent_id=payload.agent_id)
+    agent_name = None
+    if payload.agent_name is not None or payload.agent_id is not None:
+        agent_name = _resolve_agent_name(payload.agent_name, payload.agent_id)
+    status = get_performance_model_status(agent_id=agent_name)
     try:
         score = performance(
             payload.level,
             df=df,
             non_landing_weight=payload.non_landing_weight,
             clip=payload.clip,
-            agent_id=payload.agent_id,
+            agent_id=agent_name,
             history_window=payload.history_window,
             auto_train=payload.auto_train,
         )
@@ -358,7 +395,8 @@ def performance_predict(payload: PerformancePredictRequest) -> PerformancePredic
 
     return PerformancePredictResponse(
         score=float(score),
-        agent_id=payload.agent_id,
+        agent_name=agent_name,
+        agent_id=agent_name,
         used_model=bool(status.get("model_ready") and status.get("has_agent_history")),
     )
 

@@ -664,7 +664,7 @@ def main() -> None:
         response = api_post(
             f"/instances/{instance_id}/pool_manager",
             {
-                "agent_hash": trace_tag,
+                "agent_name": trace_tag,
                 "request": generate_payload,
             },
             run_id=run_id,

@@ -53,12 +53,15 @@ Comma-separated `.txt` files, one row per line:
 | Char | Tile            | Behaviour                                  |
 |------|-----------------|--------------------------------------------|
 | `-`  | AIR             | Passable                                   |
+| `o`  | COIN            | Passable; collected on touch               |
 | `X`  | GROUND          | Solid                                      |
-| `S`  | BRICK           | Solid; broken by Big Mario from below      |
+| `S`/`B`/`b` | BRICK    | Solid; broken by Big Mario from below      |
 | `Q`/`?` | QUESTION BLOCK | Solid; yields a coin on first hit       |
 | `E`  | ENEMY SPAWN     | Spawns a Goomba; tile becomes AIR          |
 | `<`/`>` | PIPE TOP   | Solid (decorative pipe head)               |
 | `[`/`]` | PIPE BODY  | Solid (pipe shaft)                         |
+| `r`/`R`/`u`/`U` | RED PIPE | Solid; hold Down to transport in human mode |
+| `v`/`V`/`w`/`W` | BLUE PIPE | Solid; hold Down to transport in human mode |
 
 Any `.txt` map with this schema works — just pass `--map your_map.txt`.
 

@@ -43,10 +43,13 @@ def _overlaps(ax1, ay1, ax2, ay2, bx1, by1, bx2, by2) -> bool:
 
 def _tiles_for_rect(x: float, y: float, w: int, h: int):
     """Yield (col, row) tile indices under the given AABB."""
+    # Use a tiny epsilon instead of subtracting a full pixel so contact at
+    # tile boundaries remains stable with sub-pixel velocities.
+    eps = 1e-6
     col_lo = int(math.floor(x / TILE_SIZE))
-    col_hi = int(math.floor((x + w - 1) / TILE_SIZE))
+    col_hi = int(math.floor((x + w - eps) / TILE_SIZE))
     row_lo = int(math.floor(y / TILE_SIZE))
-    row_hi = int(math.floor((y + h - 1) / TILE_SIZE))
+    row_hi = int(math.floor((y + h - eps) / TILE_SIZE))
     for row in range(row_lo, row_hi + 1):
         for col in range(col_lo, col_hi + 1):
             yield col, row
@@ -69,9 +72,10 @@ def move_mario(mario: Mario, tilemap: TileMap, actions: dict) -> dict:
             'coin':       bool,   # hit a question block
             'brick_broken': bool,
             'fell_pit':   bool,   # fell below tilemap
+            'pipe_entry': Optional[str],  # 'red' | 'blue' | None
         }
     """
-    events = {'coin': False, 'brick_broken': False, 'fell_pit': False}
+    events = {'coin': False, 'brick_broken': False, 'fell_pit': False, 'pipe_entry': None}
 
     if mario.state == MarioState.DEAD:
         # dead Mario: just fall through the world
@@ -104,6 +108,8 @@ def move_mario(mario: Mario, tilemap: TileMap, actions: dict) -> dict:
     # ── invincibility timer ───────────────────────────────────────────────
     if mario.invincible_frames > 0:
         mario.invincible_frames -= 1
+    if mario.stomp_grace_frames > 0:
+        mario.stomp_grace_frames -= 1
 
     # ── X movement ────────────────────────────────────────────────────────
     mario.x += mario.vx
@@ -118,14 +124,47 @@ def move_mario(mario: Mario, tilemap: TileMap, actions: dict) -> dict:
     mario.on_ground = False
     mario.y += mario.vy
     coin, brick = _resolve_y(mario, tilemap)
-    events['coin'] = coin
+    events['coin'] = coin or _collect_overlapping_coins(mario, tilemap)
     events['brick_broken'] = brick
+    events['pipe_entry'] = _detect_pipe_entry(mario, tilemap, actions)
 
     # ── pit detection ─────────────────────────────────────────────────────
     if mario.y > tilemap.pixel_height-32:
         events['fell_pit'] = True
 
     return events
+
+
+def _collect_overlapping_coins(mario: Mario, tilemap: TileMap) -> bool:
+    """Collect any passable coin tiles overlapped by Mario this frame."""
+    collected = False
+    for col, row in _tiles_for_rect(mario.x, mario.y, mario.w, mario.h):
+        collected = tilemap.collect_coin(col, row) or collected
+    return collected
+
+
+def _detect_pipe_entry(mario: Mario, tilemap: TileMap, actions: dict) -> Optional[str]:
+    """Return pipe color when crouching on an entry pipe top, else None."""
+    # Accept tiny grounding jitter while pressing down near a pipe top.
+    if not actions.get('down'):
+        return None
+    if not mario.on_ground and abs(mario.vy) > 1.0:
+        return None
+
+    foot_row = int((mario.y + mario.h) // TILE_SIZE)
+    left_col = int(mario.x // TILE_SIZE)
+    right_col = int((mario.x + mario.w - 1) // TILE_SIZE)
+
+    candidates = {
+        tilemap.get(left_col, foot_row),
+        tilemap.get(right_col, foot_row),
+        tilemap.get(int(mario.cx // TILE_SIZE), foot_row),
+    }
+    if TileType.PIPE_RED_TOP_LEFT in candidates or TileType.PIPE_RED_TOP_RIGHT in candidates:
+        return 'red'
+    if TileType.PIPE_BLUE_TOP_LEFT in candidates or TileType.PIPE_BLUE_TOP_RIGHT in candidates:
+        return 'blue'
+    return None
 
 
 def _resolve_x(mario: Mario, tilemap: TileMap) -> None:
@@ -192,6 +231,13 @@ def move_goomba(goomba: Goomba, tilemap: TileMap) -> None:
     # vertical
     goomba.on_ground = False
     goomba.y += goomba.vy
+
+    # TileMap treats rows below the map as solid to keep Mario bounded.
+    # For enemies, falling below the map should be a pit death instead.
+    if goomba.y + goomba.h > tilemap.pixel_height:
+        goomba.state = GoombaState.DEAD
+        return
+
     _resolve_goomba_y(goomba, tilemap)
 
     # fall off world = permanent death
@@ -244,8 +290,6 @@ def check_mario_goomba(mario: Mario, goomba: Goomba) -> Optional[str]:
     """
     if not goomba.is_alive():
         return None
-    if mario.invincible_frames > 0:
-        return None
 
     ml, mt, mr, mb = mario.rect()
     gl, gt, gr, gb = goomba.rect()
@@ -256,5 +300,8 @@ def check_mario_goomba(mario: Mario, goomba: Goomba) -> Optional[str]:
     # stomp: Mario falling, his bottom was above goomba's vertical centre last frame
     if mario.vy > 0 and mb - mario.vy <= gt + goomba.h * 0.4:
         return 'stomp'
+
+    if mario.invincible_frames > 0 or mario.stomp_grace_frames > 0:
+        return None
 
     return 'hit'

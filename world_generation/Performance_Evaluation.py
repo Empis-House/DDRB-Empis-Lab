@@ -10,9 +10,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
@@ -24,6 +25,20 @@ try:
     from .evaluation_utils import metric_values, normalize_level_tokens
 except ImportError:  # pragma: no cover - keeps direct script execution working
     from evaluation_utils import metric_values, normalize_level_tokens
+
+
+_CONFIG = None  # assigned after _PerfConfig declaration
+_DEVICE = torch.device("cpu")
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_DATA_ROOT = Path(os.getenv("DDRB_DATA_ROOT", str(_REPO_ROOT))).resolve()
+_HISTORY_DIR = _DATA_ROOT / "history"
+_HISTORY_PATH = _HISTORY_DIR / "agent_performance_history.json"
+_MODEL_PATH = _DATA_ROOT / "checkpoints" / "performance_transformer.pt"
+_DOMAIN_ROOT = Path(__file__).resolve().parent.parent / "Super_Mario_Brothers_Maps" / "Domains"
+_DOMAIN_MANIFEST_NAME = "domains_manifest.json"
+_DOMAIN_PROGRESS_WINDOW = (2, 2)
+_DOMAIN_PROGRESS_STRIDE = (1, 1)
+_DOMAIN_PROGRESS_SMOOTHING = 1e-6
 
 
 def _clip01(value: float) -> float:
@@ -98,6 +113,129 @@ def _legacy_structural_score(level, df, non_landing_weight: float = 5.0 / 3.0, c
     return _clip01(score) if clip else score
 
 
+def _token_to_structure_lookup(df) -> Dict[int, str]:
+    cache_key = id(df)
+    if cache_key not in _TOKEN_STRUCTURE_LOOKUP_CACHE:
+        tokens = df["token"].astype(int).tolist()
+        structures = df["Structures"].astype(str).tolist()
+        _TOKEN_STRUCTURE_LOOKUP_CACHE[cache_key] = dict(zip(tokens, structures))
+    return _TOKEN_STRUCTURE_LOOKUP_CACHE[cache_key]
+
+
+def _level_to_grid(level, df) -> List[List[str]]:
+    tokens = normalize_level_tokens(level)
+    if not tokens:
+        return []
+
+    lookup = _token_to_structure_lookup(df)
+    columns = [list(lookup[token]) for token in tokens if token in lookup]
+    if not columns:
+        return []
+
+    height = min(len(col) for col in columns)
+    width = len(columns)
+    return [[columns[x][y] for x in range(width)] for y in range(height)]
+
+
+def _ordered_domain_references(domain_root: Path = _DOMAIN_ROOT) -> List[Tuple[str, Path]]:
+    root = Path(domain_root)
+    cache_key = str(root.resolve())
+    if cache_key in _DOMAIN_PROGRESS_REFERENCE_CACHE:
+        return _DOMAIN_PROGRESS_REFERENCE_CACHE[cache_key]
+
+    references: List[Tuple[str, Path]] = []
+    manifest_path = root / _DOMAIN_MANIFEST_NAME
+
+    if manifest_path.exists():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            if isinstance(manifest, dict):
+                for domain_name, filenames in manifest.items():
+                    if not isinstance(filenames, list):
+                        continue
+                    for filename in filenames:
+                        references.append((f"{domain_name}/{filename}", root / domain_name / filename))
+        except Exception:
+            references = []
+
+    if not references and root.exists():
+        for domain_path in sorted(p for p in root.iterdir() if p.is_dir()):
+            for level_path in sorted(domain_path.glob("*.txt")):
+                references.append((f"{domain_path.name}/{level_path.name}", level_path))
+
+    if not references:
+        raise FileNotFoundError(f"No ordered domain references found under: {root}")
+
+    _DOMAIN_PROGRESS_REFERENCE_CACHE[cache_key] = references
+    return references
+
+
+def _reference_pattern_counts(level_path: Path, window: tuple[int, int], stride: tuple[int, int]):
+    try:
+        from .tile_pattern_kl import load_level_set, tile_pattern_distribution
+    except ImportError:  # pragma: no cover - supports direct script imports
+        from tile_pattern_kl import load_level_set, tile_pattern_distribution
+
+    cache_key = (str(level_path.resolve()), window, stride)
+    if cache_key not in _DOMAIN_PROGRESS_PATTERN_CACHE:
+        level_set = load_level_set(level_path, recursive=False)
+        _DOMAIN_PROGRESS_PATTERN_CACHE[cache_key] = tile_pattern_distribution(level_set, window=window, stride=stride)
+    return _DOMAIN_PROGRESS_PATTERN_CACHE[cache_key]
+
+
+def _progression_index_from_divergences(divergences: List[float]) -> float:
+    if not divergences:
+        return 0.0
+
+    if len(divergences) == 1:
+        return 0.0
+
+    positions = [index / float(len(divergences) - 1) for index in range(len(divergences))]
+    weights = [1.0 / (1.0 + max(0.0, divergence)) for divergence in divergences]
+    weight_sum = sum(weights)
+    if weight_sum <= 0.0:
+        return 0.0
+    return float(sum(weight * position for weight, position in zip(weights, positions)) / weight_sum)
+
+
+def Performance_KL_Progression(
+    level,
+    df,
+    clip: bool = True,
+    domain_root: Path = _DOMAIN_ROOT,
+    window: tuple[int, int] = _DOMAIN_PROGRESS_WINDOW,
+    stride: tuple[int, int] = _DOMAIN_PROGRESS_STRIDE,
+    smoothing: float = _DOMAIN_PROGRESS_SMOOTHING,
+) -> float:
+    """Score a level by its progression along the ordered SMB domain corpus.
+
+    The level is compared against every reference level in domains_manifest.json
+    using tile-pattern KL divergence. The divergences are then converted into a
+    normalized progression index in [0, 1] where earlier references contribute
+    toward 0 and later references contribute toward 1.
+    """
+    grid = _level_to_grid(level, df)
+    if not grid:
+        return 0.0
+
+    try:
+        from .tile_pattern_kl import _probability_vectors, crossed_divergence, tile_pattern_distribution
+    except ImportError:  # pragma: no cover - supports direct script imports
+        from tile_pattern_kl import _probability_vectors, crossed_divergence, tile_pattern_distribution
+
+    candidate_counts = tile_pattern_distribution([grid], window=window, stride=stride)
+    ordered_references = _ordered_domain_references(domain_root=Path(domain_root))
+
+    divergences: List[float] = []
+    for _, reference_path in ordered_references:
+        reference_counts = _reference_pattern_counts(reference_path, window=window, stride=stride)
+        p_probs, q_probs = _probability_vectors(reference_counts, candidate_counts, smoothing=smoothing)
+        divergences.append(float(crossed_divergence(p_probs, q_probs)))
+
+    score = _progression_index_from_divergences(divergences)
+    return _clip01(score) if clip else float(score)
+
+
 @dataclass
 class _PerfConfig:
     feature_dim: int = 8
@@ -151,15 +289,25 @@ class _HistoryTransformer(nn.Module):
 
 _CONFIG = _PerfConfig()
 _DEVICE = torch.device("cpu")
-_HISTORY_DIR = Path("history")
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_DATA_ROOT = Path(os.getenv("DDRB_DATA_ROOT", str(_REPO_ROOT))).resolve()
+_HISTORY_DIR = _DATA_ROOT / "history"
 _HISTORY_PATH = _HISTORY_DIR / "agent_performance_history.json"
-_MODEL_PATH = Path("checkpoints") / "performance_transformer.pt"
+_MODEL_PATH = _DATA_ROOT / "checkpoints" / "performance_transformer.pt"
+_DOMAIN_ROOT = Path(__file__).resolve().parent.parent / "Super_Mario_Brothers_Maps" / "Domains"
+_DOMAIN_MANIFEST_NAME = "domains_manifest.json"
+_DOMAIN_PROGRESS_WINDOW = (2, 2)
+_DOMAIN_PROGRESS_STRIDE = (1, 1)
+_DOMAIN_PROGRESS_SMOOTHING = 1e-6
 
 _AGENT_HISTORY: Dict[str, List[Dict[str, Any]]] = {}
 _AGENT_TO_INDEX: Dict[str, int] = {}
 _MODEL: Optional[_HistoryTransformer] = None
 _MODEL_READY = False
 _LAST_TRAIN_SAMPLE_COUNT = 0
+_TOKEN_STRUCTURE_LOOKUP_CACHE: Dict[int, Dict[int, str]] = {}
+_DOMAIN_PROGRESS_REFERENCE_CACHE: Dict[str, List[Tuple[str, Path]]] = {}
+_DOMAIN_PROGRESS_PATTERN_CACHE: Dict[tuple[str, tuple[int, int], tuple[int, int]], Any] = {}
 
 
 def _ensure_agent_index(agent_id: str) -> int:
@@ -459,6 +607,27 @@ def performance(
         agent_id=agent_id,
         history_window=history_window,
         auto_train=auto_train,
+    )
+
+
+def performance_kl_progression(
+    level,
+    df,
+    clip: bool = True,
+    domain_root: Path = _DOMAIN_ROOT,
+    window: tuple[int, int] = _DOMAIN_PROGRESS_WINDOW,
+    stride: tuple[int, int] = _DOMAIN_PROGRESS_STRIDE,
+    smoothing: float = _DOMAIN_PROGRESS_SMOOTHING,
+) -> float:
+    """snake_case alias for Performance_KL_Progression with identical behavior."""
+    return Performance_KL_Progression(
+        level,
+        df=df,
+        clip=clip,
+        domain_root=domain_root,
+        window=window,
+        stride=stride,
+        smoothing=smoothing,
     )
 
 
