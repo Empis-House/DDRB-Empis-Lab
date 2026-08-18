@@ -1,33 +1,59 @@
-﻿# DDRB-Empis-Lab Investigation Project
+﻿# Level Up: Dinamic Difficulty-Reward Balancing 
+A research about learning optimization on the AI Super Mario Bros. Framework.
 
 ## Abstract
 
-This paper describes a Dynamic Difficulty Reward Balancing (DDRB) pipeline for Super Mario Bros procedural content generation and reinforcement learning. We combine grammar-based level encoding, Map-Elites diversity search, and a solvability filter to produce playable levels for agent training. The core hypothesis is that balancing reward components across generated content can improve agent robustness and convergence compared with fixed-level baselines.
+Difficulty adjustment is a core design decision in games and education alike. The video game industry has studied how to balance difficulty to maintain player engagement for decades, leading to a specialized field focused on automatic adjustment: Dynamic Difficulty Adjustment (DDA). Although DDA is extensively studied in games, it originated in cognitive science as Csikszentmihalyi's flow theory (1970). However, the transition from flow theory to DDA has lost both applicability to other contexts (such as education) and explicit consideration of factors beyond difficulty that are equally relevant to dynamic adjustment.
+
+This project reconceptualizes DDA as an abstract learning problem grounded in flow theory, proposing it as a new paradigm for AI-supported educational systems. Specifically, we present a Dynamic Difficulty-Reward Balancing (DDRB) pipeline that encourages flow-theoretic conditions and extends automatic adjustment to consider both task challenge and environmental economy. By doing so, the dynamic balancing system implicitly addresses more complex aspects of frustration and boredom, moving beyond binary task feasibility to evaluate whether a task is worthwhile in the learner's context.
+
+As an initial experiment, we use the Super Mario Bros framework (a widely studied computational benchmark) reframing it not as an engaging game but as a learning task with an optimal learning curve. Rather than training from human gameplay, which would be prohibitively ambitious, we leverage the extensive literature on SMB agents to train and test our model. Our core hypothesis is that DDRB improves agent robustness and convergence compared to existing methods. We additionally hypothesize that agent behavior provides sufficient diversity to correlate with human learning experience.
 
 ## Research Question
 
-Can Dynamic Difficulty Reward Balancing (DDRB) improve agent robustness and convergence in Super Mario Bros training compared to fixed-level training and equivalent PCGML baselines without reward balancing?
+Can Dynamic Difficulty Reward Balancing (DDRB) improve agent robustness and convergence in Super Mario Bros training compared to fixed-level training and equivalent PCGML baselines without difficulty-reward balancing?
 
-## Contribution Compared to Prior Mario PCG/DDA Work
+### Subsequent Questions
 
-- Defines DDRB as a reward-weighting mechanism that shapes generation indirectly through training signal balancing, rather than adjusting level difficulty directly.
-- Integrates grammar-encoded Super Mario Bros structures with Map-Elites feature coverage and a concrete solvability check.
-- Demonstrates an evaluation workflow that compares original SMB baselines with generated level training under DDRB.
-- Uses a specialized solvability algorithm in `world_generation/Word_Stitching.py` to filter candidate levels before training.
+- System generates "Fun/Learning optimal" levels for human players?
+- This hipotetical behavior could be translateble to other ML kind problems as LLMs? 
+- Can an LLM based DDRB architecture versus academic problems, on a especific subjects, destilate an human oriented AI tutor?
+
 
 ## Project Objectives
 
-1. Implement a DDRB-aware PCGML generation pipeline for Super Mario Bros.
-2. Support level representations as grammar tokens, tile maps, and compact integer encodings.
-3. Apply a movement-based solvability validation step to generated candidates.
-4. Use Map-Elites feature functions to preserve diverse training content.
-5. Evaluate robustness and convergence against baseline agents.
+- Implement the five components of the SMB DDRB system: 
+
+    1. **Raw Level Generator**: A PCG system using Feasibility Search with Solvability filtering and Diversity Map-Elites to generate candidate levels.
+    2. **Difficulty Ranker**: Labeling levels by heuristic and deep learning predictors of agent performance in platform-based task.
+    3. **Reward Dispatcher**: A deep learning model equipped with actions to mediate agent learning by managing environmental economy (coins, question boxes, goombas, etc.) in accordance with overall task objectives.
+    4. **Agentic Player Sandbox**: A configurable environment for training DDRB-consistent agents to play Super Mario Bros.
+    5. **System Manager**: Orchestrate the other DDRB components (1–3) to deliver near-optimal levels sequentially based on an agent's historical performance (from 4).
+
+- Develop an evaluation workflow comparing training outcomes under the original SMB baseline with training under DDRB.
+
+
+## Background
+### Dynamic Difficulty Adjustment vs. Flow Theory
+### Learning, Expertice and Reward
+### Expirience-Driven PCG
+### Super Mario Bros. Framework
+### AI Agentic Players
+### Mario PCG and Diversity on Learning
+### Map Elites and Agents Performance
+
+
+
 
 ## Experimental Plan
 
+System architecture is essencialy same as Expirience Driven PCG, which is also similar to world models. 
+
+![image]()
+
 ### Agents to Evaluate
 
-- `tabular_q` agent from `mario_rl_env/run_agent.py`
+- Heuristic agent from `mario_rl_env/run_agent.py`
 - baseline agent trained on original Super Mario Bros levels
 - DDRB-trained agent using validated generated levels
 - non-DDRB PCGML agent trained on generated levels without reward balancing (comparison arm)
@@ -70,7 +96,7 @@ Secondary metrics:
 
 This project uses three complementary representations:
 
-- **Grammar token sequences** from `Super_Mario_Brothers_Maps/structures/Universal_Structures.txt` for structured construction and pattern reuse.
+- **Grammar token sequences** from `world_generation/Universal_Structures.txt` for structured construction and pattern reuse.
 - **Tile-map encodings** for standard Super Mario Bros level geometry and agent observation states.
 - **Compact integer vectors** that encode landing and collider attributes in discrete bit ranges for fast validity checks.
 
@@ -98,9 +124,7 @@ Map-Elites diversity is managed using feature functions in `world_generation/Var
 
 Current features include:
 
-- `calculate_slope(Level, df)` — computes an overall slope from landing heights and normalizes it to (0,1)
-- `landings_score(Level, df)` — measures normalized landing tile density
-- `colliders_score(Level, df)` — measures normalized collider tile density
+- overworld, underground and athletic
 
 These features embed levels into a bounded space and guide elite selection toward diverse, behaviorally distinct content.
 
@@ -122,7 +146,7 @@ Source data is drawn from both original and generated assets:
 
 - original levels in `Super_Mario_Brothers_Maps/Original/`
 - processed training levels in `Super_Mario_Brothers_Maps/Processed/`
-- grammar structure definitions in `Super_Mario_Brothers_Maps/structures/Universal_Structures.txt`
+- grammar structure definitions in `world_generation/Universal_Structures.txt`
 - generated candidate levels in `Super_Mario_Brothers_Maps/generated_levels/`
 
 For evaluation, the primary training set is validated generated content, while the baseline set uses processed original levels.
