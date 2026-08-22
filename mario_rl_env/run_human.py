@@ -45,6 +45,20 @@ try:
 except ImportError:
     from constants import FPS
 
+try:
+    from mario_rl_env.artifact_registry import ArtifactRegistry, DEFAULT_REGISTRY_PATH, ExecutionConfig
+except ImportError:
+    from artifact_registry import ArtifactRegistry, DEFAULT_REGISTRY_PATH, ExecutionConfig
+
+_REGISTRY: Optional[ArtifactRegistry] = None
+
+
+def _get_registry() -> ArtifactRegistry:
+    global _REGISTRY
+    if _REGISTRY is None:
+        _REGISTRY = ArtifactRegistry(DEFAULT_REGISTRY_PATH)
+    return _REGISTRY
+
 
 class WorldGenerationApiClient:
     """Thin client for the world generation HTTP API used by infinite mode."""
@@ -99,6 +113,7 @@ class WorldGenerationApiClient:
                 "alphas": alphas,
                 "variety_domains": variety_domains,
                 "grid_points": grid_points,
+                "instance_id": "human"
             },
         )
         return response["instance_id"]
@@ -118,12 +133,16 @@ class WorldGenerationApiClient:
         }
         self.post(f"/instances/{instance_id}/generate_mapping", payload)
 
-    def fetch_next_level(
+    def fetch_levels(
         self,
         instance_id: str,
         agent_name: str,
         request_payload: dict,
+        batch_size: int = 1,
+        priority: int = 0,
     ) -> Dict[str, Any]:
+        """Pull up to `batch_size` levels in a single round-trip (reduces the number
+        of HTTP calls needed to keep the prefetch queue warm vs. one call per level)."""
         try:
             from world_generation.level_formats import rows_to_tilemap
         except ImportError:
@@ -137,16 +156,24 @@ class WorldGenerationApiClient:
             {
                 "agent_name": agent_name,
                 "request": request_payload,
+                "batch_size": max(1, int(batch_size or 1)),
+                "priority": priority,
             },
         )
+        tilemaps = response.get("tilemaps") or []
+        if not tilemaps and response.get("tilemap") is not None:
+            tilemaps = [response["tilemap"]]
         return {
-            "tilemap": rows_to_tilemap(response["tilemap"]),
+            "tilemaps": [rows_to_tilemap(rows) for rows in tilemaps],
             "generation": int(response.get("generation", 0)),
         }
 
 
 class LevelStreamBuffer:
     """Client-side queue of generated levels, refilled from pool_manager."""
+
+    _MAX_DEAD_LETTERS = 50
+    _RETRY_BACKOFF_SECONDS = 1.0
 
     def __init__(
         self,
@@ -155,35 +182,62 @@ class LevelStreamBuffer:
         agent_name: str,
         request_payload: dict,
         prefetch_levels: int,
+        priority: int = 0,
     ):
         self.api_client = api_client
         self.instance_id = instance_id
         self.agent_name = agent_name
         self.request_payload = request_payload
         self.prefetch_levels = max(1, int(prefetch_levels))
+        self.priority = priority
+        # Fetch several levels per HTTP round-trip instead of one-per-request: cuts
+        # the number of pool_manager calls needed to keep the queue warm roughly
+        # by a factor of fetch_chunk_size.
+        self.fetch_chunk_size = max(1, min(4, self.prefetch_levels))
         self._queue = deque()
         self._pending: deque[Future] = deque()
+        self._pending_count = 0
         self._generation: Optional[int] = None
         self._executor = ThreadPoolExecutor(max_workers=max(1, min(4, self.prefetch_levels)))
+        self._dead_letters: deque = deque(maxlen=self._MAX_DEAD_LETTERS)
+        self._next_retry_at = 0.0
 
     def _accept_result(self, result: Dict[str, Any]) -> None:
         generation = int(result.get("generation", 0))
+        tilemaps = result.get("tilemaps", [])
         if self._generation is None or generation > self._generation:
             self._generation = generation
             self._queue.clear()
         elif generation < self._generation:
             return
-        self._queue.append(result)
+        for tilemap in tilemaps:
+            self._queue.append({"tilemap": tilemap, "generation": generation})
 
     def _submit_fetch(self) -> None:
+        if time.monotonic() < self._next_retry_at:
+            return
+        chunk = self.fetch_chunk_size
         self._pending.append(
             self._executor.submit(
-                self.api_client.fetch_next_level,
+                self.api_client.fetch_levels,
                 self.instance_id,
                 self.agent_name,
                 self.request_payload,
+                chunk,
+                self.priority,
             )
         )
+        self._pending_count += chunk
+
+    def _record_dead_letter(self, exc: Exception) -> None:
+        # Capture failed fetches instead of silently dropping them, and back off
+        # briefly so a stuck/unhealthy API isn't hammered with immediate retries.
+        self._dead_letters.append({
+            "agent_name": self.agent_name,
+            "reason": str(exc),
+            "at": time.time(),
+        })
+        self._next_retry_at = time.monotonic() + self._RETRY_BACKOFF_SECONDS
 
     def _drain_ready(self) -> None:
         ready_count = 0
@@ -194,18 +248,33 @@ class LevelStreamBuffer:
                 break
 
         for _ in range(ready_count):
-            self._accept_result(self._pending.popleft().result())
+            future = self._pending.popleft()
+            self._pending_count = max(0, self._pending_count - self.fetch_chunk_size)
+            try:
+                self._accept_result(future.result())
+            except Exception as exc:
+                self._record_dead_letter(exc)
 
     def _wait_for_next(self):
         if not self._pending:
             self._submit_fetch()
-        self._accept_result(self._pending.popleft().result())
+        if not self._pending:
+            return  # still in backoff window; nothing in flight to wait on
+        future = self._pending.popleft()
+        self._pending_count = max(0, self._pending_count - self.fetch_chunk_size)
+        try:
+            self._accept_result(future.result())
+        except Exception as exc:
+            self._record_dead_letter(exc)
 
     def refill(self, min_size: int = 1) -> None:
         self._drain_ready()
         target = max(int(min_size), self.prefetch_levels)
-        while len(self._queue) + len(self._pending) < target:
+        while len(self._queue) + self._pending_count < target:
+            before = len(self._pending)
             self._submit_fetch()
+            if len(self._pending) == before:
+                break  # in backoff window; avoid spinning
 
     def pop_next(self) -> "pd.DataFrame":
         self._drain_ready()
@@ -214,11 +283,19 @@ class LevelStreamBuffer:
             self._drain_ready()
         if not self._queue:
             self._wait_for_next()
+        if not self._queue:
+            raise RuntimeError(
+                f"No levels available for {self.agent_name} after fetch failures; "
+                f"see dead_letters() ({len(self._dead_letters)} recorded)"
+            )
         return self._queue.popleft()["tilemap"]
+
+    def dead_letters(self) -> List[Dict[str, Any]]:
+        return list(self._dead_letters)
 
     def size(self) -> int:
         self._drain_ready()
-        return len(self._queue) + len(self._pending)
+        return len(self._queue) + self._pending_count
 
     def latest_generation(self) -> Optional[int]:
         self._drain_ready()
@@ -1199,6 +1276,7 @@ def run(
     instance_id: Optional[str] = None,
     agent_name: Optional[str] = None,
     agent_hash: Optional[str] = None,
+    case_id: Optional[str] = None,
     pool_request_payload: Optional[dict] = None,
     alpha_schedule: Optional[List[float]] = None,
     alpha_full_interval: bool = True,
@@ -1221,6 +1299,17 @@ def run(
     from metrics import MetricsTracker
     from constants import TILE_SIZE
 
+    resolved_agent_name = str(agent_name or agent_hash or "human_player").strip() or "human_player"
+    run_id = f"human-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    registry = _get_registry()
+    registry.record_run_start(
+        agent_name=resolved_agent_name,
+        mode="human_play",
+        run_id=run_id,
+        case_id=case_id,
+        metadata={"infinite_mode": infinite_mode, "objective": "freeplay"},
+    )
+
     api_client: Optional[WorldGenerationApiClient] = None
     alpha_streams: Optional[List[InfiniteLane]] = None
     current_alpha_idx: int = 0
@@ -1239,7 +1328,6 @@ def run(
         )
         if not api_base_url:
             api_base_url = "http://127.0.0.1:8000"
-        resolved_agent_name = str(agent_name or agent_hash or "human_player").strip() or "human_player"
         if not pool_request_payload:
             pool_request_payload = {
                 "example_code": ['1-1','1-2','1-3','2-1','3-1','3-3','4-1','4-2','5-1','5-3','6-1','6-2','6-3','7-1','8-1'],
@@ -1491,6 +1579,30 @@ def run(
     if save == "y":
         tracker.save_csv("metrics_human.csv")
         tracker.save_replay("replay_human_last.json")
+        registry.register(
+            artifact_kind="metrics_csv",
+            artifact_path="metrics_human.csv",
+            case_id=case_id,
+            run_id=run_id,
+            agent_name=resolved_agent_name,
+            mode="human_play",
+        )
+        registry.register(
+            artifact_kind="replay",
+            artifact_path="replay_human_last.json",
+            case_id=case_id,
+            run_id=run_id,
+            agent_name=resolved_agent_name,
+            mode="human_play",
+        )
+
+    registry.record_run_complete(
+        agent_name=resolved_agent_name,
+        mode="human_play",
+        run_id=run_id,
+        case_id=case_id,
+        metrics=tracker.summary(),
+    )
 
 
 def run_survival_time_trial(
@@ -1501,6 +1613,7 @@ def run_survival_time_trial(
     instance_id: Optional[str] = None,
     agent_name: Optional[str] = None,
     agent_hash: Optional[str] = None,
+    case_id: Optional[str] = None,
     pool_request_payload: Optional[dict] = None,
     alpha_schedule: Optional[List[float]] = None,
     alpha_full_interval: bool = True,
@@ -1539,6 +1652,16 @@ def run_survival_time_trial(
     bonus_time_kill_seconds = max(0.0, float(bonus_time_kill_seconds))
     bonus_time_blue_pipe_seconds = max(0.0, float(bonus_time_blue_pipe_seconds))
     current_player_name = str(agent_name or agent_hash or "human_player").strip() or "human_player"
+
+    run_id = f"human-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    registry = _get_registry()
+    registry.record_run_start(
+        agent_name=current_player_name,
+        mode="human_play",
+        run_id=run_id,
+        case_id=case_id,
+        metadata={"infinite_mode": infinite_mode, "objective": "survive"},
+    )
 
     api_client: Optional[WorldGenerationApiClient] = None
     alpha_streams: Optional[List[InfiniteLane]] = None
@@ -2013,6 +2136,13 @@ def run_survival_time_trial(
                 alpha_stream.stream.close()
 
     if restart_requested:
+        registry.record_run_complete(
+            agent_name=current_player_name,
+            mode="human_play",
+            run_id=run_id,
+            case_id=case_id,
+            metrics={"outcome": "restarted"},
+        )
         return run_survival_time_trial(
             map_path=map_path,
             fps=fps,
@@ -2020,6 +2150,7 @@ def run_survival_time_trial(
             api_base_url=api_base_url,
             instance_id=instance_id,
             agent_name=current_player_name,
+            case_id=case_id,
             pool_request_payload=pool_request_payload,
             alpha_schedule=alpha_schedule,
             alpha_full_interval=alpha_full_interval,
@@ -2052,6 +2183,44 @@ def run_survival_time_trial(
     _save_time_trial_ranking(ranking_file, ordered)
     tracker.save_csv("metrics_human.csv")
     tracker.save_replay("replay_human_last.json")
+    registry.register(
+        artifact_kind="metrics_csv",
+        artifact_path="metrics_human.csv",
+        case_id=case_id,
+        run_id=run_id,
+        agent_name=current_player_name,
+        mode="human_play",
+    )
+    registry.register(
+        artifact_kind="replay",
+        artifact_path="replay_human_last.json",
+        case_id=case_id,
+        run_id=run_id,
+        agent_name=current_player_name,
+        mode="human_play",
+    )
+    registry.register(
+        artifact_kind="ranking",
+        artifact_path=ranking_file,
+        case_id=case_id,
+        run_id=run_id,
+        agent_name=current_player_name,
+        mode="human_play",
+        metrics={"rank": rank, "total": len(ordered)},
+    )
+    registry.record_run_complete(
+        agent_name=current_player_name,
+        mode="human_play",
+        run_id=run_id,
+        case_id=case_id,
+        metrics={
+            "survived_seconds": final_entry["survived_seconds"],
+            "bonus_time_seconds": final_entry["bonus_time_seconds"],
+            "remaining_seconds": final_entry["remaining_seconds"],
+            "rank": rank,
+            "total": len(ordered),
+        },
+    )
 
     print(f"Run ended: {run_end_reason}")
     print(
@@ -2117,6 +2286,11 @@ def main() -> None:
                         help="Agent name identifier for pool manager (default: %(default)s)")
     parser.add_argument("--agent-hash", default=None,
                         help="Deprecated alias for --agent-name")
+    parser.add_argument(
+        "--case-id",
+        default=None,
+        help="Optional identifier grouping this run with others for comparison/reporting",
+    )
     parser.add_argument(
         "--alphas",
         default="0.0, 0.05, 0.1",
@@ -2211,7 +2385,7 @@ def main() -> None:
         if not args.alpha_full_interval:
             alphas = [float(value) for value in str(args.alphas).split(",") if value.strip()]
         pool_request_payload = {
-            "example_code": ["1-1"],
+            "example_code": ['1-1','1-2','1-3','2-1','3-1','3-3','4-1','4-2','5-1','5-3','6-1','6-2','6-3','7-1','8-1'],
             "Level_Len": args.level_len,
             "module": args.level_len,
             "batch_size": args.batch_size,
@@ -2221,6 +2395,7 @@ def main() -> None:
             "grammar_end_out_degree": max(1, int(args.grammar_end_out_degree)),
             "grammar_bulk_repeats": max(1, int(args.grammar_bulk_repeats)),
             "grammar_max_attempts": max(16, int(args.grammar_max_attempts)),
+
         }
         if is_survive_mode:
             run_survival_time_trial(
@@ -2228,6 +2403,7 @@ def main() -> None:
                 api_base_url=args.api_url,
                 instance_id=args.instance_id,
                 agent_name=(args.agent_name or args.agent_hash),
+                case_id=args.case_id,
                 pool_request_payload=pool_request_payload,
                 alpha_schedule=alphas,
                 alpha_full_interval=bool(args.alpha_full_interval),
@@ -2253,6 +2429,7 @@ def main() -> None:
                 api_base_url=args.api_url,
                 instance_id=args.instance_id,
                 agent_name=(args.agent_name or args.agent_hash),
+                case_id=args.case_id,
                 pool_request_payload=pool_request_payload,
                 alpha_schedule=alphas,
                 alpha_full_interval=bool(args.alpha_full_interval),
@@ -2277,6 +2454,7 @@ def main() -> None:
                 api_base_url=args.api_url,
                 instance_id=args.instance_id,
                 agent_name=(args.agent_name or args.agent_hash),
+                case_id=args.case_id,
                 alpha_schedule=None,
                 initial_time_seconds=args.time_seconds,
                 lives_total=args.lives,
@@ -2287,7 +2465,7 @@ def main() -> None:
                 fps=args.fps,
             )
         else:
-            run(map_path=args.map, fps=args.fps)
+            run(map_path=args.map, case_id=args.case_id, fps=args.fps)
 
 
 def _actions_to_idx(actions: dict) -> int:

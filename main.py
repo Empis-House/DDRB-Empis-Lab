@@ -10,12 +10,24 @@ Check List:
 
 import json
 import os
+import sys
 import time
 import argparse
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
+from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+# Windows consoles default stdout/stderr to cp1252, which can't encode the
+# unicode checkmarks (✓/✗) used in self-test output below; reconfigure to
+# utf-8 so those prints don't crash the process with UnicodeEncodeError.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
+from mario_rl_env.artifact_registry import ArtifactRegistry, DEFAULT_REGISTRY_PATH, ExecutionConfig
 from mario_rl_env.run_agent import run as agent_run
 from mario_rl_env.env import N_ACTIONS
 from mario_rl_env.ml_agents import AGENT_MANAGER, RLAgent
@@ -226,7 +238,7 @@ def api_post(path, payload, run_id: str = "-", trace_tag: str = "-", request_id:
 
 # '1-1','1-2','1-3','2-1','3-1','3-3','4-1','4-2','5-1','5-3','6-1','6-2','6-3','7-1','8-1'
 
-example_codes = ['1-1','1-2','1-3','2-1','3-1','3-3','4-1','4-2','5-1','5-3','6-1','6-2','6-3','7-1','8-1']
+example_codes = ['1-1','1-2','4-2','5-1']
 level_len = 40
 module = level_len  # Temp: module != Level_Len could generate buged but solvable levels
 grid_points = [[0.4, 0.449, 0.49], [0.53, 0.553, 0.58], [0.53, 0.569, 0.59]]
@@ -263,6 +275,8 @@ def test_checkpoint_persistence() -> None:
     print("TESTING CHECKPOINT PERSISTENCE (torch_dqn)")
     print("="*60)
     
+    import tempfile
+
     try:
         from mario_rl_env.ml_agents import TorchDQNAgent
         
@@ -282,25 +296,27 @@ def test_checkpoint_persistence() -> None:
         print(f"  Updated exploration_rate: {agent1.exploration_rate:.6f}")
         print(f"  Updated curr_step: {agent1.curr_step}")
         
-        # Save checkpoint
-        checkpoint_path = "checkpoints/test_torch_dqn_persistence.pt"
-        agent1.save(checkpoint_path)
-        print(f"\n✓ Saved checkpoint to {checkpoint_path}")
-        
-        # Load checkpoint using TorchDQNAgent.load()
-        agent2 = TorchDQNAgent.load(checkpoint_path)
-        print(f"✓ Loaded checkpoint")
-        print(f"  Loaded exploration_rate: {agent2.exploration_rate:.6f}")
-        print(f"  Loaded curr_step: {agent2.curr_step}")
-        
-        # Verify persistence
-        if agent2.curr_step == agent1.curr_step and abs(agent2.exploration_rate - agent1.exploration_rate) < 1e-6:
-            print(f"\n✓ PERSISTENCE VERIFIED: Training state properly restored!")
-            print(f"  Network weights restored: {agent2.net is not None}")
-            return True
-        else:
-            print(f"\n✗ PERSISTENCE FAILED: State mismatch")
-            return False
+        # Self-test scratch file: use a temp dir, not the checkpoints/ lineage tree,
+        # so it never collides with or pollutes real agent_name-keyed checkpoints.
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            checkpoint_path = os.path.join(tmp_dir, "test_torch_dqn_persistence.pt")
+            agent1.save(checkpoint_path)
+            print(f"\n✓ Saved checkpoint to {checkpoint_path}")
+
+            # Load checkpoint using TorchDQNAgent.load()
+            agent2 = TorchDQNAgent.load(checkpoint_path)
+            print(f"✓ Loaded checkpoint")
+            print(f"  Loaded exploration_rate: {agent2.exploration_rate:.6f}")
+            print(f"  Loaded curr_step: {agent2.curr_step}")
+
+            # Verify persistence
+            if agent2.curr_step == agent1.curr_step and abs(agent2.exploration_rate - agent1.exploration_rate) < 1e-6:
+                print(f"\n✓ PERSISTENCE VERIFIED: Training state properly restored!")
+                print(f"  Network weights restored: {agent2.net is not None}")
+                return True
+            else:
+                print(f"\n✗ PERSISTENCE FAILED: State mismatch")
+                return False
             
     except Exception as e:
         print(f"✗ Checkpoint test failed: {e}")
@@ -321,6 +337,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-last", action="store_true", help="Render only last try of each batch")
     parser.add_argument("--checkpoint-path", default="", help="Checkpoint path for trainable agents")
     parser.add_argument("--report-file", default="", help="Optional JSON file to save run report")
+    parser.add_argument(
+        "--mode",
+        default="training",
+        choices=["training", "testing", "validation", "inference"],
+        help="Agent execution mode (default: training). Non-training modes force a fixed/deterministic seed.",
+    )
+    parser.add_argument(
+        "--case-id",
+        default=None,
+        help="Optional identifier grouping this run with others for comparison/reporting "
+        "(e.g. same seed run with different agents). Leave unset for a standalone run.",
+    )
     parser.add_argument("--skip-self-tests", action="store_true", help="Skip startup agent/self persistence checks")
     parser.add_argument("--quiet", action="store_true", help="Reduce custom logging output")
     parser.add_argument("--no-color", action="store_true", help="Disable ANSI colors in logs")
@@ -443,6 +471,24 @@ def _format_agent_report(context, result):
         }
 
     return report
+
+
+def _write_run_manifest(context: dict, report_path: str, result: dict | None = None) -> None:
+    manifest = {
+        "schema_version": 2,
+        "kind": "agent_run_manifest",
+        "created_at": datetime.now().isoformat(),
+        "context": context,
+        "result_summary": {
+            "mode": report_path.split("/")[-1] if report_path else None,
+            "history_entries": len(result.get("history", [])) if isinstance(result, dict) and isinstance(result.get("history"), list) else 0,
+        },
+    }
+    directory = os.path.dirname(report_path)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    with open(report_path, "w", encoding="utf-8") as fh:
+        json.dump(manifest, fh, indent=2)
 
 
 def _print_agent_report(report):
@@ -602,6 +648,7 @@ def main() -> None:
         "variety_domains": ["overworld", "underground", "athletic"],
         "grid_points": grid_points,
         "grid_mode": grid_mode,
+        "instance_id":args.agent,
     }
     api_sequence = 0
 
@@ -638,6 +685,17 @@ def main() -> None:
         "batch_size": 5,
         "epochs": 10,
     }
+    # queue_key isolates this run's pool_manager queue from other concurrent runs;
+    # case_id is the (optional) user-supplied grouping id used by the artifact
+    # registry for reporting/A-B comparison and must not be conflated with it.
+    agent_request_payload = {
+        "agent_name": bootstrap_trace,
+        "request": generate_payload,
+        "batch_size": max(1, args.batch_size),
+        "case_id": args.case_id,
+        "queue_key": f"run:{run_id}|agent:{args.agent}",
+        "priority": 0,
+    }
     generate_result = api_post(
         f"/instances/{instance_id}/generate_mapping",
         generate_payload,
@@ -655,25 +713,91 @@ def main() -> None:
     level_variety_summaries = []
     level_counter = 0
 
-    has_checkpoint = bool(args.checkpoint_path and os.path.exists(args.checkpoint_path))
+    if args.checkpoint_path:
+        has_checkpoint = os.path.exists(args.checkpoint_path)
+    else:
+        # No explicit --checkpoint-path: run_agent.run() will resolve the
+        # agent_name-keyed lineage itself (case-tagged if --case-id given, else
+        # `latest`); check the same lineage here purely for logging.
+        from mario_rl_env.artifact_registry import CheckpointManager
+        has_checkpoint = bool(
+            CheckpointManager(ArtifactRegistry(DEFAULT_REGISTRY_PATH)).resolve_resume_path(args.agent, args.case_id)
+        )
     persistence_mode = "resume" if has_checkpoint else "fresh"
     trace_tag = f"run:{run_id}|agent:{args.agent}|persist:{persistence_mode}"
+    execution_config = ExecutionConfig.resolve(
+        mode=args.mode,
+        overrides={
+            "agent_name": args.agent,
+            "case_id": args.case_id,
+            "run_id": run_id,
+            "seed": None,
+            "deterministic": False,
+        },
+    )
+    execution_config.apply_seed()
+    registry = ArtifactRegistry(DEFAULT_REGISTRY_PATH)
+    registry.record_run_start(
+        agent_name=args.agent,
+        mode=execution_config.mode,
+        run_id=run_id,
+        case_id=args.case_id,
+        config_hash=execution_config.config_hash(),
+        metadata={
+            "episodes": args.episodes,
+            "batch_size": args.batch_size,
+            "checkpoint_path": args.checkpoint_path or None,
+            "persistence_mode": persistence_mode,
+            "seed_used": execution_config.seed_used,
+        },
+    )
 
-    def agent_runner():
-        nonlocal level_counter
-        response = api_post(
+    # Client-side batch cache + background prefetch: pool_manager already returns a
+    # batch (args.batch_size levels) per HTTP round-trip; previously agent_runner
+    # fetched a *fresh* batch on every call and threw away everything but the first
+    # tilemap, so most of the API latency (and the variety-summary work) was pure
+    # waste. Now the whole batch is cached client-side and a refill is prefetched in
+    # the background once the cache runs low, overlapping API latency with episode
+    # execution instead of stalling on it.
+    level_cache: "deque" = deque()
+    prefetch_executor = ThreadPoolExecutor(max_workers=1)
+    prefetch_future: Optional[Future] = None
+    refill_threshold = max(1, max(1, args.batch_size) // 2)
+
+    def fetch_batch():
+        return api_post(
             f"/instances/{instance_id}/pool_manager",
-            {
-                "agent_name": trace_tag,
-                "request": generate_payload,
-            },
+            agent_request_payload,
             run_id=run_id,
             trace_tag=trace_tag,
             request_id=next_request_id("pool.pull"),
             quiet=args.quiet,
         )
+
+    def _extract_tilemaps(response):
+        tilemaps = response.get("tilemaps") or []
+        if not tilemaps and response.get("tilemap") is not None:
+            tilemaps = [response["tilemap"]]
+        return tilemaps
+
+    def agent_runner():
+        nonlocal level_counter, prefetch_future
+        if not level_cache:
+            if prefetch_future is None:
+                prefetch_future = prefetch_executor.submit(fetch_batch)
+            response = prefetch_future.result()
+            prefetch_future = None
+            tilemaps = _extract_tilemaps(response)
+            if not tilemaps:
+                raise RuntimeError("pool_manager returned no tilemaps")
+            level_cache.extend(tilemaps)
+
+        if len(level_cache) <= refill_threshold and prefetch_future is None:
+            prefetch_future = prefetch_executor.submit(fetch_batch)
+
+        tilemap = level_cache.popleft()
         level_counter += 1
-        level_frame = rows_to_tilemap(response["tilemap"])
+        level_frame = rows_to_tilemap(tilemap)
         try:
             summary = _build_level_variety_summary(level_frame, level_counter, cached_domain_levels)
             level_variety_summaries.append(summary)
@@ -700,6 +824,7 @@ def main() -> None:
                 level=level_counter,
                 error=exc,
             )
+
         return level_frame
 
     _log_section(run_id, "TRAINING START", quiet=args.quiet)
@@ -714,7 +839,10 @@ def main() -> None:
         agent_name=args.agent,
         verbose=not args.quiet,
         checkpoint_path=args.checkpoint_path,
+        registry=registry,
+        execution_config=execution_config,
     )
+    prefetch_executor.shutdown(wait=False, cancel_futures=True)
     _log(
         run_id,
         "training",
@@ -737,13 +865,24 @@ def main() -> None:
         "effective_grid_points": instance.get("grid_points", create_payload["grid_points"]),
         "generate_status": generate_result.get("status") if isinstance(generate_result, dict) else None,
         "level_variety_summaries": level_variety_summaries,
+        "case_id": args.case_id,
     }
     report = _format_agent_report(context=context, result=result)
     _print_agent_report(report)
 
+    registry.record_run_complete(
+        agent_name=args.agent,
+        mode=execution_config.mode,
+        run_id=run_id,
+        case_id=args.case_id,
+        config_hash=execution_config.config_hash(),
+        metrics=report.get("metrics", {}),
+    )
+
     if args.report_file:
         with open(args.report_file, "w", encoding="utf-8") as fh:
             json.dump(report, fh, indent=2)
+        _write_run_manifest(context=context, report_path=os.path.splitext(args.report_file)[0] + ".manifest.json", result=result)
         _log(run_id, "report", "saved run report", quiet=args.quiet, path=args.report_file)
 
     _log_general_variables(run_id, phase="end", quiet=args.quiet)

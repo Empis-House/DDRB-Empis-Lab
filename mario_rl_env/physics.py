@@ -129,7 +129,7 @@ def move_mario(mario: Mario, tilemap: TileMap, actions: dict) -> dict:
     events['pipe_entry'] = _detect_pipe_entry(mario, tilemap, actions)
 
     # ── pit detection ─────────────────────────────────────────────────────
-    if mario.y > tilemap.pixel_height-32:
+    if mario.y > tilemap.pixel_height-TILE_SIZE:
         events['fell_pit'] = True
 
     return events

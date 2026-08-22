@@ -18,13 +18,13 @@ FPS: int = 60
 MAX_STEPS_PER_EPISODE: int = 500000   # truncation limit
 
 # ── Physics ───────────────────────────────────────────────────────────────────
-GRAVITY: float          = 0.025*TILE_SIZE_F    # px / frame²
-MAX_FALL_SPEED: float   = 0.38*TILE_SIZE_F    # px / frame  (terminal velocity)
-MARIO_WALK_SPEED: float = 0.08*TILE_SIZE_F    # px / frame
-MARIO_RUN_SPEED: float  = 0.15*TILE_SIZE_F     # px / frame
-MARIO_JUMP_VY: float    = -0.5*TILE_SIZE_F   # px / frame  (negative = upward)
-BOUNCE_VY: float        = -0.2*TILE_SIZE_F    # when stomping an enemy
-GOOMBA_SPEED: float     = 0.038*TILE_SIZE_F     # px / frame
+GRAVITY: float          = 0.0156*TILE_SIZE_F    # px / frame²
+MAX_FALL_SPEED: float   = 0.375*TILE_SIZE_F    # px / frame  (terminal velocity)
+MARIO_WALK_SPEED: float = 0.078*TILE_SIZE_F    # px / frame
+MARIO_RUN_SPEED: float  = 0.141*TILE_SIZE_F     # px / frame
+MARIO_JUMP_VY: float    = -0.391*TILE_SIZE_F   # px / frame  (negative = upward)
+BOUNCE_VY: float        = -0.219*TILE_SIZE_F    # when stomping an enemy
+GOOMBA_SPEED: float     = 0.0375*TILE_SIZE_F     # px / frame
 
 # ── Mario hitbox (fraction of tile) ──────────────────────────────────────────
 MARIO_W: int = int(TILE_SIZE * 0.75)   # 24 px

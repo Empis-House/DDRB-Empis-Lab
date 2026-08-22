@@ -11,6 +11,8 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tupl
 import gymnasium as gym
 import numpy as np
 
+from mario_rl_env.artifact_registry import ArtifactRegistry, CheckpointManager, DEFAULT_REGISTRY_PATH, ExecutionConfig, HistoryManager
+
 StateKey = Tuple[int, ...]
 
 
@@ -65,12 +67,9 @@ class RLAgent(abc.ABC):
         try:
             with open(tmp_path, "wb") as f:
                 pickle.dump(self, f)
-            # Remove target if it exists (Windows file lock workaround)
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+            # os.replace() atomically overwrites an existing target on POSIX/Windows;
+            # no manual remove needed (and removing first would leave target missing
+            # if replace then failed, breaking crash-safety).
             os.replace(tmp_path, path)
             print(f"[Agent] Saved checkpoint to {path}")
         except Exception as e:
@@ -144,12 +143,6 @@ class TrainingHistory:
         tmp_path = f"{path}.tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(self.records, f, indent=2, default=_default)
-        # Remove target if it exists (Windows file lock workaround)
-        if os.path.exists(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
         os.replace(tmp_path, path)
 
     def _save_csv(self, path: str) -> None:
@@ -158,12 +151,6 @@ class TrainingHistory:
             tmp_path = f"{path}.tmp"
             with open(tmp_path, "w", encoding="utf-8") as f:
                 f.write("")
-            # Remove target if it exists (Windows file lock workaround)
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
             os.replace(tmp_path, path)
             return
         keys = list(self.records[0].keys())
@@ -172,12 +159,6 @@ class TrainingHistory:
             writer = csv.DictWriter(f, fieldnames=keys)
             writer.writeheader()
             writer.writerows(self.records)
-        # Remove target if it exists (Windows file lock workaround)
-        if os.path.exists(path):
-            try:
-                os.remove(path)
-            except OSError:
-                pass
         os.replace(tmp_path, path)
 
 
@@ -610,11 +591,6 @@ class TorchDQNAgent(RLAgent):
         tmp_path = f"{path}.tmp"
         try:
             torch.save(checkpoint, tmp_path)
-            if os.path.exists(path):
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
             os.replace(tmp_path, path)
             print(f"[Agent] Saved DDQN checkpoint to {path} at step {self.curr_step}")
         except Exception as e:
@@ -698,11 +674,28 @@ def run_training_loop(
     checkpoint_path: str = "",
     debug: bool = False,
     trace_tag: str = "",
+    registry: Optional[ArtifactRegistry] = None,
+    execution_config: Optional[ExecutionConfig] = None,
+    checkpoint_manager: Optional[CheckpointManager] = None,
+    history_manager: Optional[HistoryManager] = None,
 ) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     history = TrainingHistory()
+    resolved_config = execution_config or ExecutionConfig.resolve(mode="training")
+    if execution_config is None:
+        resolved_config.apply_seed()
+    if registry is None:
+        registry = ArtifactRegistry(DEFAULT_REGISTRY_PATH)
     if batch_size <= 0:
         batch_size = 1
+
+    # A manager takes priority over a raw path: it partitions history storage
+    # by agent_name + case_id (same lineage scheme as CheckpointManager) so
+    # history can be joined to checkpoints via run_id/agent_name/case_id alone.
+    if history_manager is not None:
+        history_path = str(history_manager.history_path(
+            resolved_config.agent_name or "unknown", resolved_config.case_id
+        ))
 
     if history_path:
         print(f"[Training] Will save history to {history_path}")
@@ -802,9 +795,26 @@ def run_training_loop(
 
         if history_path:
             history.save(history_path)
-
-        if checkpoint_path and episode % batch_size == 0:
-            agent.save(checkpoint_path)
+            if history_manager is not None:
+                history_manager.record(
+                    agent_name=resolved_config.agent_name or "unknown",
+                    case_id=resolved_config.case_id,
+                    run_id=resolved_config.run_id,
+                    mode=resolved_config.mode,
+                    config_hash=resolved_config.config_hash(),
+                    metrics={"episode": episode, "total_reward": total_reward, "steps": steps},
+                )
+            else:
+                registry.register(
+                    artifact_kind="history",
+                    artifact_path=history_path,
+                    case_id=resolved_config.case_id,
+                    run_id=resolved_config.run_id,
+                    agent_name=resolved_config.agent_name or "unknown",
+                    mode=resolved_config.mode,
+                    metrics={"episode": episode, "total_reward": total_reward, "steps": steps},
+                    config_hash=resolved_config.config_hash(),
+                )
 
         if verbose:
             print(
@@ -812,8 +822,52 @@ def run_training_loop(
                 f"steps={steps}, done={done}, truncated={truncated}"
             )
 
-    if checkpoint_path:
+    # Checkpoint updates happen exactly once, here, on run completion (not
+    # mid-run) so a crash mid-training never leaves a half-updated lineage.
+    if checkpoint_manager is not None:
+        checkpoint_manager.save(
+            agent,
+            agent_name=resolved_config.agent_name or "unknown",
+            case_id=resolved_config.case_id,
+            run_id=resolved_config.run_id,
+            mode=resolved_config.mode,
+            config_hash=resolved_config.config_hash(),
+            metrics={"episodes": n_episodes},
+        )
+    elif checkpoint_path:
         agent.save(checkpoint_path)
+        registry.register(
+            artifact_kind="checkpoint",
+            artifact_path=checkpoint_path,
+            case_id=resolved_config.case_id,
+            run_id=resolved_config.run_id,
+            agent_name=resolved_config.agent_name or "unknown",
+            mode=resolved_config.mode,
+            metrics={"episodes": n_episodes},
+            config_hash=resolved_config.config_hash(),
+        )
+
+    if history_path and history.records:
+        if history_manager is not None:
+            history_manager.record(
+                agent_name=resolved_config.agent_name or "unknown",
+                case_id=resolved_config.case_id,
+                run_id=resolved_config.run_id,
+                mode=resolved_config.mode,
+                config_hash=resolved_config.config_hash(),
+                metrics={"episodes": len(history.records)},
+            )
+        else:
+            registry.register(
+                artifact_kind="history",
+                artifact_path=history_path,
+                case_id=resolved_config.case_id,
+                run_id=resolved_config.run_id,
+                agent_name=resolved_config.agent_name or "unknown",
+                mode=resolved_config.mode,
+                metrics={"episodes": len(history.records)},
+                config_hash=resolved_config.config_hash(),
+            )
 
     agent.detach_env()
     return results

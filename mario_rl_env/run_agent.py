@@ -28,6 +28,7 @@ import time
 from typing import Callable, Optional, Union
 
 import gymnasium as gym
+from mario_rl_env.artifact_registry import ArtifactRegistry, CheckpointManager, DEFAULT_REGISTRY_PATH, ExecutionConfig, HistoryManager
 from mario_rl_env.ml_agents import AGENT_MANAGER, RLAgent, run_training_loop
 
 sys.path.insert(0, os.path.dirname(__file__))
@@ -294,6 +295,8 @@ def run(
     epsilon: float = 0.2,
     epsilon_decay: float = 0.995,
     min_epsilon: float = 0.01,
+    registry=None,
+    execution_config=None,
 ) -> dict:
     """
     Run *n_episodes* of the specified agent and return summary stats.
@@ -406,12 +409,27 @@ def run(
         )
 
     if training_agent:
+        checkpoint_manager = None
+        history_manager = None
+        case_id = getattr(execution_config, "case_id", None) if execution_config is not None else None
+        if not checkpoint_path:
+            # No explicit path: resume/save via the agent_name-keyed lineage
+            # (case-tagged if execution_config carries a case_id, else `latest`).
+            checkpoint_manager = CheckpointManager(registry or ArtifactRegistry(DEFAULT_REGISTRY_PATH))
+            checkpoint_path = checkpoint_manager.resolve_resume_path(agent_name, case_id) or ""
+        if not history_path:
+            # Same lineage scheme as checkpoints, so history joins to a run's
+            # checkpoint lineage via run_id/agent_name/case_id alone.
+            history_manager = HistoryManager(registry or ArtifactRegistry(DEFAULT_REGISTRY_PATH))
+            history_path = str(history_manager.history_path(agent_name, case_id))
         resumed = bool(checkpoint_path and os.path.exists(checkpoint_path))
         trace_tag = f"{agent_name}|persist:{'resume' if resumed else 'fresh'}"
         if checkpoint_path and os.path.exists(checkpoint_path):
             if verbose:
                 print(f"[Agent:{trace_tag}] Resuming from checkpoint: {checkpoint_path}")
-            agent = RLAgent.load(checkpoint_path)
+            # Use the concrete agent class's own `load` (e.g. TorchDQNAgent uses
+            # torch.save/load, not RLAgent's generic pickle format).
+            agent = type(agent).load(checkpoint_path)
             # Validate loaded agent action size against environment
             try:
                 loaded_size = getattr(agent, "action_size", None)
@@ -448,6 +466,10 @@ def run(
             checkpoint_path=checkpoint_path,
             debug=debug,
             trace_tag=trace_tag,
+            registry=registry,
+            execution_config=execution_config,
+            checkpoint_manager=checkpoint_manager,
+            history_manager=history_manager,
         )
         if hasattr(env, "close"):
             env.close()
@@ -601,6 +623,11 @@ def main() -> None:
                         help="Minimum epsilon after decay (default: 0.05)")
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug logging for training (prints sample obs, encoded state, Q deltas)")
+    parser.add_argument("--mode", default="training",
+                        choices=["training", "testing", "validation", "inference"],
+                        help="Agent execution mode (default: training). Non-training modes force a fixed/deterministic seed.")
+    parser.add_argument("--case-id", default=None,
+                        help="Optional identifier grouping this run with others for comparison/reporting")
     parser.add_argument("--analyse",  default="",
                         metavar="REPLAY_FILE",
                         help="Analyse a saved replay JSON instead of running")
@@ -613,7 +640,23 @@ def main() -> None:
     print(f"\nMario RL – Agent: {args.agent}  "
           f"Episodes: {args.episodes}  Obs: {args.obs}\n")
 
-    run(
+    run_id = f"{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    execution_config = ExecutionConfig.resolve(
+        mode=args.mode,
+        overrides={"agent_name": args.agent, "case_id": args.case_id, "run_id": run_id},
+    )
+    execution_config.apply_seed()
+    registry = ArtifactRegistry(DEFAULT_REGISTRY_PATH)
+    registry.record_run_start(
+        agent_name=args.agent,
+        mode=execution_config.mode,
+        run_id=run_id,
+        case_id=args.case_id,
+        config_hash=execution_config.config_hash(),
+        metadata={"episodes": args.episodes, "batch_size": args.batch, "seed_used": execution_config.seed_used},
+    )
+
+    result = run(
         map_path=args.map,
         agent_name=args.agent,
         batch_size=args.batch,
@@ -631,6 +674,17 @@ def main() -> None:
         epsilon=args.epsilon,
         epsilon_decay=args.epsilon_decay,
         min_epsilon=args.min_epsilon,
+        registry=registry,
+        execution_config=execution_config,
+    )
+
+    registry.record_run_complete(
+        agent_name=args.agent,
+        mode=execution_config.mode,
+        run_id=run_id,
+        case_id=args.case_id,
+        config_hash=execution_config.config_hash(),
+        metrics=result if isinstance(result, dict) else {},
     )
 
 

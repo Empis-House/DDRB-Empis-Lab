@@ -17,6 +17,7 @@ import pandas as pd
 import numpy as np
 from itertools import product
 import time
+from datetime import datetime, timezone
 from scipy.spatial import distance
 import sys
 import os
@@ -24,6 +25,13 @@ from pathlib import Path
 
 from ml_profiler import profile
 from level_formats import build_token_structure_lookup, level_string_to_tilemap
+try:
+    # Prefer the package-relative import so the exception types line up with
+    # world_generation.API's `except QueueBackpressureError` handling; fall back to
+    # the sys.path-based absolute import for standalone/script execution.
+    from .request_queue import RequestQueueManager, QueueBackpressureError, DifficultyPoolManager
+except ImportError:
+    from request_queue import RequestQueueManager, QueueBackpressureError, DifficultyPoolManager
 
 sys.path.insert(0, os.path.dirname(__file__))
 
@@ -32,7 +40,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 class Map_Elite:
     all = []
     
-    def __init__(self, function, alphas =[0], Variety_Domains = [], Grid_points =[], state_path=None, grid_mode="fixed"):
+    def __init__(self, function, alphas =[0], Variety_Domains = [], Grid_points =[], state_path=None, grid_mode="fixed", instance_id=""):
         # function must acept a Level as input
         # fuction must have Image the real interval [0,1]
         # The Filtter will capting the optimal value (min)
@@ -42,6 +50,7 @@ class Map_Elite:
         self.__Variety_Domains = Variety_Domains
         self.__state_path = Path(state_path) if state_path else None
         self.__grid_mode = grid_mode
+        self.__instance_id = str(instance_id or "")
         
         self.__Opt_Values = None
         self.__Optimal_strings = None
@@ -72,11 +81,19 @@ class Map_Elite:
         self.Knowledge = dfnp[3:]
 
         # Data Manager
-        self.__manager_memory    = {}         # { agent_name: { 'strings': [...], 'generation': int } }
+        self.__manager_memory    = {}         # { agent_name: { 'strings': [...], 'generation': int, 'request_signature': str } }
         self.__current_generation = 0         # monotonic counter; the "flag"
         self.__refresh_lock      = threading.Lock()
+        self.__queue_manager      = RequestQueueManager()  # backpressure + priority + dead-letter capture
+        self.__difficulty_pool    = DifficultyPoolManager(capacity=32)  # opt-in producer/consumer human-lane pool
         if self.__state_path is not None:
             self.__load_manager_state()
+
+    def get_queue_snapshot(self, queue_key):
+        return self.__queue_manager.snapshot(queue_key)
+
+    def get_dead_letters(self, queue_key=None):
+        return self.__queue_manager.dead_letters(queue_key)
     
     def __repr__(self):
         return str([self.__Optimal_strings,self.__Opt_Values])
@@ -109,6 +126,9 @@ class Map_Elite:
     def get_current_generation(self):
         return int(self.__current_generation)
 
+    def get_instance_id(self):
+        return self.__instance_id
+
     def get_state_path(self):
         return str(self.__state_path) if self.__state_path is not None else None
 
@@ -131,6 +151,9 @@ class Map_Elite:
                 data = json.load(fh)
             self.__current_generation = int(data.get("generation", self.__current_generation))
             self.__manager_memory = {}
+            metadata = data.get("metadata", {}) if isinstance(data.get("metadata"), dict) else {}
+            if metadata:
+                self.__instance_id = str(metadata.get("instance_id", self.__instance_id))
             for agent_name, payload in data.get("manager_memory", {}).items():
                 strings = payload.get("strings", [])
                 generation = int(payload.get("generation", self.__current_generation))
@@ -141,6 +164,7 @@ class Map_Elite:
                     "generation": generation,
                     "request_signature": payload.get("request_signature", ""),
                 }
+            self.__queue_manager.load_state(data.get("queue_state", {}))
         except Exception as exc:
             print(f"[Map_Elite] Warning: failed to load manager state from {path}: {exc}")
 
@@ -151,14 +175,27 @@ class Map_Elite:
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
             tmp_path = f"{path}.tmp"
+            updated_at = datetime.now(timezone.utc).isoformat()
             data = {
+                "schema_version": 2,
+                "metadata": {
+                    "instance_id": self.__instance_id,
+                    "updated_at": updated_at,
+                    "function": self.get_function_name(),
+                    "alphas": self.get_alphas(),
+                    "variety_domains": self.get_variety_domain_names(),
+                    "grid_mode": self.get_grid_mode(),
+                    "grid_points": self.get_grid_points(),
+                    "state_path": self.get_state_path(),
+                },
                 "generation": self.__current_generation,
                 "manager_memory": self.__manager_memory,
+                # Real per-request lineage (run_id/split/seed/params/timestamps) is
+                # recorded by world_generation.lineage from the API layer, not here.
+                "queue_state": self.__queue_manager.to_state(),
             }
             with open(tmp_path, "w", encoding="utf-8") as fh:
                 json.dump(data, fh, indent=2)
-            if os.path.exists(path):
-                os.remove(path)
             os.replace(tmp_path, path)
         except Exception as exc:
             print(f"[Map_Elite] Warning: failed to save manager state to {path}: {exc}")
@@ -579,21 +616,83 @@ class Map_Elite:
     def _hasher(self):
         return
     
-    
-    def pool_manager(self, agent_name, request):
+    def pool_manager(self, agent_name, request, batch_size=1, queue_key=None, max_pending=8, priority=0,
+                      difficulty=None, refill_threshold=4):
         """Deliver pre-generated level strings/tilemap to RL agents.
- 
+
         Each agent owns an isolated batch built from a snapshot of
-        __Optimal_strings.  When any agent exhausts its batch the first
+        __Optimal_strings. When any agent exhausts its batch the first
         caller triggers Generate_Mapping(request); every later caller that
         exhausted in the same generation skips the call and just refills
         from the already-refreshed snapshot.
+
+        queue_key tracks per-run/per-case contention. Requests are admitted
+        up to max_pending concurrently; once at capacity, a higher-priority
+        request preempts the lowest-priority pending one (which is recorded
+        as a dead letter) and otherwise QueueBackpressureError is raised.
+        Any request that fails after being admitted (e.g. generation could
+        not produce levels) is also recorded as a dead letter instead of
+        being silently dropped.
+
+        If `difficulty` is given, requests are served from a producer/consumer
+        pool keyed by that label instead of the per-agent snapshot above: the
+        pool is topped up (not cleared) whenever it drops below
+        `refill_threshold`, so gameplay only blocks on generation when the
+        pool is fully drained rather than once per exhausted agent batch.
         """
         agent_name = str(agent_name or "").strip()
+        batch_size = max(1, int(batch_size or 1))
         if not agent_name:
             raise ValueError("agent_name is required")
         request_signature = self.__request_signature(request)
         mapping_request = self.__mapping_request(request)
+        queue_key = str(queue_key or f"agent:{agent_name}").strip() or f"agent:{agent_name}"
+        request_id = self.__queue_manager.admit(
+            queue_key, agent_name, priority=priority, max_pending=max_pending,
+        )
+        try:
+            if difficulty is not None:
+                tilemaps = self.__pool_manager_fill_difficulty(
+                    str(difficulty), request, batch_size, refill_threshold,
+                )
+            else:
+                chosen_strings = self.__pool_manager_fill(agent_name, request, batch_size, request_signature, mapping_request)
+                tilemaps = [self.str_to_tilemap(level) for level in chosen_strings]
+        except Exception as exc:
+            self.__queue_manager.fail(queue_key, request_id, reason=str(exc))
+            raise
+        self.__save_manager_state()
+        self.__queue_manager.release(queue_key, request_id)
+        return tilemaps
+
+    def __pool_manager_fill_difficulty(self, difficulty, request, batch_size, refill_threshold):
+        refill_threshold = max(1, int(refill_threshold or 1))
+        target = max(refill_threshold, batch_size)
+        with self.__refresh_lock:
+            if self.__difficulty_pool.pending(difficulty) < target:
+                self.__refill_difficulty_pool(difficulty, request)
+
+        chosen = []
+        for _ in range(batch_size):
+            try:
+                chosen.append(self.__difficulty_pool.consume(difficulty))
+            except RuntimeError:
+                with self.__refresh_lock:
+                    if self.__difficulty_pool.pending(difficulty) == 0:
+                        self.__refill_difficulty_pool(difficulty, request)
+                chosen.append(self.__difficulty_pool.consume(difficulty))
+        return chosen
+
+    def __refill_difficulty_pool(self, difficulty, request):
+        strings = self.__extract_valid_levels(request)
+        if not strings:
+            self.refresh_generated_mapping(clear_manager_memory=False, **self.__mapping_request(request))
+            strings = self.__extract_valid_levels(request)
+        if not strings:
+            raise RuntimeError(f"Difficulty pool '{difficulty}' could not produce any valid levels.")
+        self.__difficulty_pool.refill(difficulty, [self.str_to_tilemap(s) for s in strings])
+
+    def __pool_manager_fill(self, agent_name, request, batch_size, request_signature, mapping_request):
         agent_state = self.__manager_memory.get(agent_name)
 
         # 1. Initialise agent batch on first visit or when batch is empty
@@ -613,40 +712,28 @@ class Map_Elite:
                 "generation": self.__current_generation,
                 "request_signature": request_signature,
             }
- 
+
         batch = self.__manager_memory[agent_name]["strings"]
-        chosen = self.str_to_tilemap(batch.pop(random.randrange(len(batch))))
- 
-        # 2. Batch exhausted → replenish, generating new levels if needed
-        if not batch:
-            agent_gen = self.__manager_memory[agent_name]["generation"]
- 
-            # Fast path (no lock): another agent already bumped the generation
-            # this cycle, so Generate_Mapping was already called.
-            if agent_gen == self.__current_generation:
- 
-                # Slow path: we may be first — acquire the lock and re-check
-                # (double-checked locking prevents a race between two agents
-                # that both saw agent_gen == __current_generation simultaneously
-                # and would otherwise both call Generate_Mapping, with the
-                # second call deleting the first's output mid-write).
-                with self.__refresh_lock:
-                    if agent_gen == self.__current_generation:
-                        self.refresh_generated_mapping(clear_manager_memory=False, **mapping_request)    # one call per generation
- 
-            # Refill from __Optimal_strings — either just refreshed above
-            # or already refreshed by a concurrent agent that won the lock.
-            self.__manager_memory[agent_name] = {
-                "strings":    self.__extract_valid_levels(request),
-                "generation": self.__current_generation,
-                "request_signature": request_signature,
-            }
-            batch = self.__manager_memory[agent_name]["strings"]
+        chosen_strings = []
+        while len(chosen_strings) < batch_size:
             if not batch:
-                raise RuntimeError("Pool manager could not produce any valid levels after regeneration.")
- 
-        self.__save_manager_state()
-        return chosen
+                agent_gen = self.__manager_memory[agent_name]["generation"]
+                if agent_gen == self.__current_generation:
+                    with self.__refresh_lock:
+                        if agent_gen == self.__current_generation:
+                            self.refresh_generated_mapping(clear_manager_memory=False, **mapping_request)
+                self.__manager_memory[agent_name] = {
+                    "strings": self.__extract_valid_levels(request),
+                    "generation": self.__current_generation,
+                    "request_signature": request_signature,
+                }
+                batch = self.__manager_memory[agent_name]["strings"]
+                if not batch:
+                    raise RuntimeError("Pool manager could not produce any valid levels after regeneration.")
+            chosen_strings.append(batch.pop(random.randrange(len(batch))))
+
+        self.__manager_memory[agent_name]["strings"] = batch
+        return chosen_strings
                 
 
 
