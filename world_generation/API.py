@@ -112,6 +112,22 @@ class StrToTilemapRequest(BaseModel):
     level: str
 
 
+class JobStatusResponse(BaseModel):
+    job_id: str
+    status: str
+    lane: str
+    created_at: float
+    completed_at: Optional[float] = None
+
+
+class JobResultResponse(BaseModel):
+    job_id: str
+    status: str
+    lane: str
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
 class MapEliteResponse(BaseModel):
     instance_id: str
     function: str
@@ -501,6 +517,122 @@ def pool_manager(instance_id: str, payload: PoolManagerRequest) -> PoolManagerRe
         split=job.request.split,
         run_id=job.request.params.get("run_id"),
     )
+
+
+@app.post("/instances/{instance_id}/generate_mapping/jobs", response_model=JobStatusResponse)
+def submit_generate_mapping_job(instance_id: str, payload: GenerateMappingRequest) -> JobStatusResponse:
+    """Async submit: returns immediately with job_id/status; does not block on generation."""
+    instance = _get_instance(instance_id)
+    contract = _issue_generation_contract(
+        payload,
+        default_lane="agentic",
+        default_workflow="train",
+        default_split="train",
+    )
+
+    def _do_generate() -> Dict[str, Any]:
+        instance.refresh_generated_mapping(
+            clear_manager_memory=True,
+            example_code=payload.example_code,
+            Level_Len=payload.Level_Len,
+            module=payload.module,
+            batch_size=payload.batch_size,
+            epochs=payload.epochs,
+            seed=payload.seed,
+            Game_Mode=payload.Game_Mode,
+            observability=payload.observability,
+            use_grammar_degree_grid=payload.use_grammar_degree_grid,
+            grammar_min_degree=payload.grammar_min_degree,
+            grammar_end_out_degree=payload.grammar_end_out_degree,
+            grammar_bulk_repeats=payload.grammar_bulk_repeats,
+            grammar_max_attempts=payload.grammar_max_attempts,
+        )
+        return {
+            "status": "generated",
+            "instance_id": instance_id,
+            "optimal_count": instance.get_optimal_count(),
+            "generation": instance.get_current_generation(),
+        }
+
+    try:
+        job = _GENERATION_QUEUE_ROUTER.run_async(
+            contract, _do_generate,
+            on_done=lambda j: _record_lineage(instance_id, j, status=j.status),
+        )
+    except QueueBackpressureError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
+    return JobStatusResponse(job_id=job.job_id, status=job.status, lane=job.lane, created_at=job.created_at, completed_at=job.completed_at)
+
+
+@app.post("/instances/{instance_id}/pool_manager/jobs", response_model=JobStatusResponse)
+def submit_pool_manager_job(instance_id: str, payload: PoolManagerRequest) -> JobStatusResponse:
+    """Async submit for the human-lane pool refill/consume path; returns immediately."""
+    instance = _get_instance(instance_id)
+    agent_name = _resolve_agent_name(payload.agent_name, payload.agent_hash)
+    batch_size = max(1, int(payload.batch_size or 1))
+    queue_key = payload.queue_key or f"case:{payload.case_id or 'default'}|agent:{agent_name}"
+    contract = _issue_generation_contract(
+        payload,
+        default_lane=str(payload.queue_lane or "human"),
+        default_workflow=str(payload.workflow or "live_pool"),
+        default_split=str(payload.split or "live"),
+    )
+    contract.params.setdefault("queue_key", queue_key)
+    contract.params.setdefault("agent_name", agent_name)
+
+    def _do_pool() -> Dict[str, Any]:
+        tilemaps = instance.pool_manager(
+            agent_name,
+            payload.request,
+            batch_size=batch_size,
+            queue_key=queue_key,
+            max_pending=payload.max_pending,
+            priority=payload.priority,
+            difficulty=payload.difficulty,
+            refill_threshold=payload.refill_threshold,
+        )
+        queue_state = instance.get_queue_snapshot(queue_key)
+        serialized_tilemaps = [_serialize_tilemap(tilemap) for tilemap in tilemaps]
+        return {
+            "instance_id": instance_id,
+            "agent_name": agent_name,
+            "generation": instance.get_current_generation(),
+            "batch_size": batch_size,
+            "tilemap": serialized_tilemaps[0] if serialized_tilemaps else None,
+            "tilemaps": serialized_tilemaps,
+            "case_id": payload.case_id,
+            "queue_key": queue_key,
+            "pending": int(queue_state.get("pending", 0)),
+            "max_pending": int(queue_state.get("max_pending", payload.max_pending)),
+            "dead_letter_count": int(queue_state.get("dead_letter_count", 0)),
+        }
+
+    try:
+        job = _GENERATION_QUEUE_ROUTER.run_async(
+            contract, _do_pool,
+            on_done=lambda j: _record_lineage(instance_id, j, status=j.status),
+        )
+    except QueueBackpressureError as exc:
+        raise HTTPException(status_code=429, detail=str(exc))
+    return JobStatusResponse(job_id=job.job_id, status=job.status, lane=job.lane, created_at=job.created_at, completed_at=job.completed_at)
+
+
+@app.get("/jobs/{job_id}", response_model=JobStatusResponse)
+def track_job(job_id: str) -> JobStatusResponse:
+    """Track: lightweight status check, no result payload."""
+    job = _GENERATION_QUEUE_ROUTER.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job '{job_id}' not found")
+    return JobStatusResponse(job_id=job.job_id, status=job.status, lane=job.lane, created_at=job.created_at, completed_at=job.completed_at)
+
+
+@app.get("/jobs/{job_id}/result", response_model=JobResultResponse)
+def fetch_job_result(job_id: str) -> JobResultResponse:
+    """Fetch: result payload once status is completed/failed; result is None while queued/running."""
+    job = _GENERATION_QUEUE_ROUTER.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"job '{job_id}' not found")
+    return JobResultResponse(job_id=job.job_id, status=job.status, lane=job.lane, result=job.result, error=job.error)
 
 
 @app.get("/instances/{instance_id}/dead_letters")

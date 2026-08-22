@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from collections import defaultdict, deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any, Deque, Dict, List, Optional
 
@@ -118,6 +119,8 @@ class GenerationQueueJob:
     status: str = "queued"
     created_at: float = field(default_factory=time.time)
     completed_at: Optional[float] = None
+    result: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -134,13 +137,21 @@ class GenerationQueueJob:
 
 
 class GenerationQueueRouter:
-    """Separate queue lanes for agentic generation and human gameplay traffic."""
+    """Separate queue lanes for agentic generation and human gameplay traffic.
 
-    def __init__(self, max_pending_per_lane: int = 8):
+    Also runs jobs asynchronously (submit -> track -> fetch) on a dedicated thread
+    pool per lane, so the human lane's worker capacity is isolated from agentic
+    train/test/validate traffic instead of sharing one pool.
+    """
+
+    def __init__(self, max_pending_per_lane: int = 8, workers_per_lane: Optional[Dict[str, int]] = None):
         self._lock = threading.RLock()
         self._max_pending_per_lane = {"agentic": int(max_pending_per_lane), "human": int(max_pending_per_lane)}
+        self._workers_per_lane = dict(workers_per_lane or {"agentic": 2, "human": 4})
+        self._executors: Dict[str, ThreadPoolExecutor] = {}
         self._pending_counts: Dict[str, int] = defaultdict(int)
         self._jobs_by_idempotency: Dict[str, GenerationQueueJob] = {}
+        self._jobs_by_id: Dict[str, GenerationQueueJob] = {}
         self._jobs_by_lane: Dict[str, Dict[str, GenerationQueueJob]] = defaultdict(dict)
         self._dead_letters: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
 
@@ -171,9 +182,71 @@ class GenerationQueueRouter:
 
             job = GenerationQueueJob(job_id=request.request_id, request=request, lane=lane)
             self._jobs_by_idempotency[idem] = job
+            self._jobs_by_id[job.job_id] = job
             self._jobs_by_lane[lane][job.job_id] = job
             self._pending_counts[lane] = self._pending_counts.get(lane, 0) + 1
             return job
+
+    def get_job(self, job_id: str) -> Optional[GenerationQueueJob]:
+        """Look up a job by job_id regardless of lane/idempotency_key, for track/fetch."""
+        with self._lock:
+            return self._jobs_by_id.get(job_id)
+
+    def _executor_for_lane(self, lane: str) -> ThreadPoolExecutor:
+        with self._lock:
+            executor = self._executors.get(lane)
+            if executor is None:
+                workers = self._workers_per_lane.get(lane, self._workers_per_lane.get("agentic", 2))
+                executor = ThreadPoolExecutor(max_workers=max(1, int(workers)), thread_name_prefix=f"genq-{lane}")
+                self._executors[lane] = executor
+            return executor
+
+    def run_async(self, request, fn, on_done=None) -> GenerationQueueJob:
+        """Submit + run fn() on the lane's worker pool; returns immediately with a job handle.
+
+        A duplicate submission (same idempotency_key) returns the existing job without
+        scheduling fn again, whatever its current status is. NOTE: this is a best-effort,
+        in-process-only guard — two racing submissions for a brand-new idempotency_key can
+        both observe status == 'queued' before either flips to 'running'; closing that
+        race needs a durable/cross-process queue, out of scope here (see module docstring).
+        """
+        job = self.submit(request)
+        if job.status != "queued":
+            return job
+
+        def _run():
+            try:
+                result = fn()
+                with self._lock:
+                    job.result = result
+                    job.status = "completed"
+                    job.completed_at = time.time()
+                    self._jobs_by_lane.get(job.lane, {}).pop(job.job_id, None)
+                    self._pending_counts[job.lane] = max(0, self._pending_counts.get(job.lane, 0) - 1)
+            except Exception as exc:
+                with self._lock:
+                    job.error = str(exc)
+                    job.status = "failed"
+                    job.completed_at = time.time()
+                    self._jobs_by_lane.get(job.lane, {}).pop(job.job_id, None)
+                    self._pending_counts[job.lane] = max(0, self._pending_counts.get(job.lane, 0) - 1)
+                    self._dead_letters[job.lane].append({
+                        "job_id": job.job_id,
+                        "reason": job.error,
+                        "idempotency_key": job.request.idempotency_key,
+                        "correlation_id": job.request.correlation_id,
+                        "failed_at": job.completed_at,
+                    })
+            if on_done is not None:
+                try:
+                    on_done(job)
+                except Exception:
+                    pass
+
+        with self._lock:
+            job.status = "running"
+        self._executor_for_lane(job.lane).submit(_run)
+        return job
 
     def mark_done(self, job_id: str, lane: Optional[str] = None) -> None:
         with self._lock:
