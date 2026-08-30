@@ -7,7 +7,7 @@ Difficulty adjustment is a core design decision in games and education alike. Th
 
 This project reconceptualizes DDA as an abstract learning problem grounded in flow theory, proposing it as a new paradigm for AI-supported educational systems. Specifically, we present a Dynamic Difficulty-Reward Balancing (DDRB) pipeline that encourages flow-theoretic conditions and extends automatic adjustment to consider both task challenge and environmental economy. By doing so, the dynamic balancing system implicitly addresses more complex aspects of frustration and boredom, moving beyond binary task feasibility to evaluate whether a task is worthwhile in the learner's context.
 
-As an initial experiment, we use the Super Mario Bros framework (a widely studied computational benchmark) reframing it not as an engaging game but as a learning task with an optimal learning curve. Rather than training from human gameplay, which would be prohibitively ambitious, we leverage the extensive literature on SMB agents to train and test our model. Our core hypothesis is that DDRB improves agent robustness and convergence compared to existing methods. We additionally hypothesize that agent behavior provides sufficient diversity to correlate with human learning experience.
+As an initial experiment, we use the Super Mario Bros framework (a widely studied computational benchmark) reframing it not as an engaging game but as a learning task with an optimal learning curve. Rather than training from human gameplay, which would be prohibitively ambitious, we leverage the extensive literature on SMB agents to train and test our model. Our core hypothesis is that DDRB improves agent robustness and convergence compared to existing methods. We additionally hypothesize that agent behaviour provides sufficient diversity to correlate with human learning experience.
 
 ## Research Question
 
@@ -49,7 +49,9 @@ Can Dynamic Difficulty Reward Balancing (DDRB) improve agent robustness and conv
 
 System architecture is essencialy same as Expirience Driven PCG, which is also similar to world models. 
 
-![image]()
+![Expirience Driven PCG Rainforce Learning](ilustrations\ED_PCG.png) 
+
+*Figure 0: *
 
 ### Agents to Evaluate
 

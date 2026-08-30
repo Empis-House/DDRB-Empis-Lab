@@ -22,7 +22,14 @@ GRAVITY: float          = 0.0156*TILE_SIZE_F    # px / frame²
 MAX_FALL_SPEED: float   = 0.375*TILE_SIZE_F    # px / frame  (terminal velocity)
 MARIO_WALK_SPEED: float = 0.078*TILE_SIZE_F    # px / frame
 MARIO_RUN_SPEED: float  = 0.141*TILE_SIZE_F     # px / frame
+MARIO_WALK_ACCEL: float = 0.032*TILE_SIZE_F      # px / frame²
+MARIO_RUN_ACCEL: float  = 0.046*TILE_SIZE_F      # px / frame²
+MARIO_AIR_ACCEL: float  = 0.022*TILE_SIZE_F      # px / frame²
+MARIO_FRICTION: float   = 0.055*TILE_SIZE_F      # px / frame²
+MARIO_AIR_FRICTION: float = 0.012*TILE_SIZE_F    # px / frame²
 MARIO_JUMP_VY: float    = -0.391*TILE_SIZE_F   # px / frame  (negative = upward)
+MARIO_JUMP_BUFFER_FRAMES: int = 6
+MARIO_COYOTE_FRAMES: int = 6
 BOUNCE_VY: float        = -0.219*TILE_SIZE_F    # when stomping an enemy
 GOOMBA_SPEED: float     = 0.0375*TILE_SIZE_F     # px / frame
 

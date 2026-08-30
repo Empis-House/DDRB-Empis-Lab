@@ -16,6 +16,7 @@ import json
 import pandas as pd
 import numpy as np
 from itertools import product
+from collections import deque
 import time
 from datetime import datetime, timezone
 from scipy.spatial import distance
@@ -86,6 +87,7 @@ class Map_Elite:
         self.__refresh_lock      = threading.Lock()
         self.__queue_manager      = RequestQueueManager()  # backpressure + priority + dead-letter capture
         self.__difficulty_pool    = DifficultyPoolManager(capacity=32)  # opt-in producer/consumer human-lane pool
+        self.__difficulty_recent_served = {}  # difficulty -> deque of recently served level strings (avoid quick repeats)
         if self.__state_path is not None:
             self.__load_manager_state()
 
@@ -173,8 +175,14 @@ class Map_Elite:
         if path is None:
             return
         try:
-            os.makedirs(os.path.dirname(path), exist_ok=True)
+            state_dir = os.path.dirname(path) or "."
+            os.makedirs(state_dir, exist_ok=True)
             tmp_path = f"{path}.tmp"
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
             updated_at = datetime.now(timezone.utc).isoformat()
             data = {
                 "schema_version": 2,
@@ -672,25 +680,49 @@ class Map_Elite:
             if self.__difficulty_pool.pending(difficulty) < target:
                 self.__refill_difficulty_pool(difficulty, request)
 
+        recent = self.__difficulty_recent_served.setdefault(difficulty, deque(maxlen=64))
         chosen = []
         for _ in range(batch_size):
             try:
-                chosen.append(self.__difficulty_pool.consume(difficulty))
+                level_string = self.__difficulty_pool.consume(difficulty)
             except RuntimeError:
                 with self.__refresh_lock:
                     if self.__difficulty_pool.pending(difficulty) == 0:
                         self.__refill_difficulty_pool(difficulty, request)
-                chosen.append(self.__difficulty_pool.consume(difficulty))
+                level_string = self.__difficulty_pool.consume(difficulty)
+            recent.append(level_string)
+            chosen.append(self.str_to_tilemap(level_string))
         return chosen
 
     def __refill_difficulty_pool(self, difficulty, request):
-        strings = self.__extract_valid_levels(request)
+        recent = self.__difficulty_recent_served.setdefault(difficulty, deque(maxlen=64))
+        queued = self.__difficulty_pool.preview_difficulty(difficulty)
+
+        def _hashable_key(value):
+            if isinstance(value, (str, bytes, int, float, bool, type(None))):
+                return value
+            try:
+                return json.dumps(value, sort_keys=True, default=str)
+            except Exception:
+                return str(value)
+
+        excluded = {_hashable_key(v) for v in recent} | {_hashable_key(v) for v in queued}
+
+        strings = [s for s in self.__extract_valid_levels(request) if _hashable_key(s) not in excluded]
         if not strings:
+            # Every known candidate for this difficulty is already queued or was served
+            # recently; regenerate so the pool gets genuinely new content instead of
+            # recycling the same static archive slice.
             self.refresh_generated_mapping(clear_manager_memory=False, **self.__mapping_request(request))
+            strings = [s for s in self.__extract_valid_levels(request) if _hashable_key(s) not in excluded]
+        if not strings:
+            # Archive still has no fresh alternative (e.g. tiny grid) — fall back to the
+            # full candidate set rather than blocking gameplay indefinitely.
             strings = self.__extract_valid_levels(request)
         if not strings:
             raise RuntimeError(f"Difficulty pool '{difficulty}' could not produce any valid levels.")
-        self.__difficulty_pool.refill(difficulty, [self.str_to_tilemap(s) for s in strings])
+        random.shuffle(strings)
+        self.__difficulty_pool.refill(difficulty, strings)
 
     def __pool_manager_fill(self, agent_name, request, batch_size, request_signature, mapping_request):
         agent_state = self.__manager_memory.get(agent_name)

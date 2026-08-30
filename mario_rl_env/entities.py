@@ -33,6 +33,8 @@ class Mario:
     on_ground: bool = False
     facing_right: bool = True
     running: bool = False
+    jump_buffer: int = 0         # frames of buffered jump input
+    coyote_time: int = 0         # frames of coyote time for jumps
 
     state: MarioState = MarioState.SMALL
     invincible_frames: int = 0   # brief invincibility after taking damage

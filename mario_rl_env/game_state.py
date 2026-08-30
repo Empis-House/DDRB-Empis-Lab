@@ -84,6 +84,8 @@ class GameState:
         self.step_count = 0
         self.total_reward = 0.0
         self.done = False
+        self.mario.jump_buffer = 0
+        self.mario.coyote_time = 0
         self._max_x = self.mario.x
         self._prev_x = self.mario.x
 

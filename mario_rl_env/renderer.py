@@ -97,7 +97,6 @@ class _SpriteLoader:
       tile_pipe_red_l.png    tile_pipe_red_r.png    tile_pipe_blue_tl.png
       tile_pipe_blue_tr.png  tile_pipe_blue_l.png   tile_pipe_blue_r.png
 
-    Run  tools/download_smb_sprites.py  to populate the folder automatically.
     """
 
     _SPRITES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sprites")
@@ -225,9 +224,15 @@ class Renderer:
         self._initialised = True
 
     def close(self) -> None:
-        if self._initialised and _PYGAME_AVAILABLE:
+        if self._initialised and _PYGAME_AVAILABLE and pygame.get_init():
             pygame.quit()
         self._initialised = False
+        self._screen = None
+        self._surface = None
+        self._font = None
+        self._font_small = None
+        self._font_overlay = None
+        self._clock = None
 
     # ── Main draw entry ───────────────────────────────────────────────────────
 
@@ -238,6 +243,7 @@ class Renderer:
 
         surf = self._surface
         surf.fill(COL_SKY)
+        #self._draw_backdrop(surf, gs)
 
         # viewport offset: keep Mario centred horizontally
         cam_x = self._camera_x(gs)
@@ -249,7 +255,7 @@ class Renderer:
 
     def flip(self, fps: int = 60) -> None:
         """Blit surface → screen and tick clock."""
-        if not self._initialised:
+        if not self._initialised or not _PYGAME_AVAILABLE or not pygame.get_init():
             return
         if not self.headless and self._screen is not None:
             screen_w, screen_h = self._screen.get_size()
@@ -299,6 +305,26 @@ class Renderer:
         cx = int(gs.mario.cx) - half_w
         max_cam = gs.tilemap.pixel_width - SCREEN_W
         return max(0, min(cx, max_cam))
+
+    # ── Backdrop ─────────────────────────────────────────────────────────────
+
+    def _draw_backdrop(self, surf: "pygame.Surface", gs: GameState) -> None:
+        horizon = int(SCREEN_H * 0.65)
+        hill_dark = (67, 137, 68)
+        hill_light = (135, 206, 127)
+
+        for y in range(0, horizon + 1):
+            t = max(0.0, min(1.0, y / max(1, horizon)))
+            r = 75
+            g = 195
+            b = 255
+            pygame.draw.line(surf, (r, g, b), (0, y), (SCREEN_W, y))
+
+        hill_y = horizon + 28
+        for x in range(0, SCREEN_W + 1, 48):
+            center = x + (gs.mario.cx * 0.08) % 48
+            pygame.draw.ellipse(surf, hill_light, (center - 60, hill_y, 140, 80))
+            pygame.draw.ellipse(surf, hill_dark, (center - 22, hill_y + 16, 120, 70))
 
     # ── Tile drawing ──────────────────────────────────────────────────────────
 
@@ -492,31 +518,46 @@ class Renderer:
         panel_h = self._hud_height
 
         panel_rect = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
-        pygame.draw.rect(screen, COL_HUD_BG, panel_rect, border_radius=6)
-        pygame.draw.rect(screen, _darken(COL_WHITE, 0.4), panel_rect, width=1, border_radius=6)
+        pygame.draw.rect(screen, (8, 16, 28), panel_rect, border_radius=8)
+        pygame.draw.rect(screen, (130, 205, 255), panel_rect, width=2, border_radius=8)
 
         m = gs.mario
         level_goal_x = max(1, (gs.tilemap.width - 4) * TILE_SIZE)
         progress_pct = max(0.0, min(100.0, (m.x / level_goal_x) * 100.0))
 
-        line_1 = (
-            f"SCORE:{m.score:06d}  COINS:{m.coins:02d}  KILLS:{m.kills:02d}  "
-            f"STEP:{gs.step_count:05d}  STATE:{m.state.name}"
-        )
+        header = self._font.render("MARIO", True, (255, 225, 120))
+        score_label = self._font_small.render(f"SCORE {m.score:06d}", True, COL_WHITE)
+        coin_label = self._font_small.render(f"COINS {m.coins:02d}", True, (255, 236, 150))
+        world_label = self._font_small.render(f"WORLD {max(1, int(m.x // TILE_SIZE) + 1):02d}", True, COL_WHITE)
+        status_label = self._font_small.render(f"STATE {m.state.name}", True, (180, 235, 255))
+        step_label = self._font_small.render(f"STEP {gs.step_count:05d}", True, (220, 236, 255))
+
+        screen.blit(header, (panel_x + 12, panel_y + 6))
+        screen.blit(score_label, (panel_x + 120, panel_y + 8))
+        screen.blit(coin_label, (panel_x + 260, panel_y + 8))
+        screen.blit(world_label, (panel_x + 370, panel_y + 8))
+        screen.blit(step_label, (panel_x + 480, panel_y + 8))
+        screen.blit(status_label, (panel_x + 620, panel_y + 8))
+
+        progress_bar_x = panel_x + 12
+        progress_bar_y = panel_y + 30
+        progress_bar_w = max(120, panel_w - 180)
+        progress_bar = pygame.Rect(progress_bar_x, progress_bar_y, progress_bar_w, 8)
+        pygame.draw.rect(screen, (30, 46, 72), progress_bar, border_radius=4)
+        fill_w = int(progress_bar_w * (progress_pct / 100.0))
+        pygame.draw.rect(screen, (120, 220, 120), pygame.Rect(progress_bar_x, progress_bar_y, fill_w, 8), border_radius=4)
+
         line_2 = (
             f"X:{int(m.x):04d}  Y:{int(m.y):03d}  VX:{m.vx:+5.2f}  VY:{m.vy:+6.2f}  "
             f"G:{int(m.on_ground)}  GOOMBAS:{len(gs.goombas):02d}  "
             f"R:{gs.total_reward:+8.2f}  PROG:{progress_pct:5.1f}%"
         )
-
-        label_1 = self._font.render(line_1, True, COL_WHITE)
         label_2 = self._font_small.render(line_2, True, COL_YELLOW)
-        screen.blit(label_1, (panel_x + 10, panel_y + 7))
-        screen.blit(label_2, (panel_x + 10, panel_y + 30))
+        screen.blit(label_2, (panel_x + 12, panel_y + 42))
 
         if self._hud_extra_line:
-            line_3 = self._font_small.render(self._hud_extra_line, True, COL_WHITE)
-            screen.blit(line_3, (panel_x + 10, panel_y + 50))
+            extra = self._font_small.render(self._hud_extra_line, True, COL_WHITE)
+            screen.blit(extra, (panel_x + 12, panel_y + 58))
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ import os
 import json
 import random
 import time
+import uuid
 from collections import deque
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from urllib.error import HTTPError, URLError
@@ -98,6 +99,7 @@ class WorldGenerationApiClient:
         alphas: Optional[list] = None,
         variety_domains: Optional[list] = None,
         grid_points: Optional[list] = None,
+        instance_id: Optional[str] = None,
     ) -> str:
         if alphas is None:
             alphas = [0.0, 0.05, 0.1]
@@ -105,6 +107,8 @@ class WorldGenerationApiClient:
             variety_domains = ["overworld", "underground", "athletic"]
         if grid_points is None:
             grid_points = [[0.0, 0.5, 1.0], [0.0, 0.5, 1.0], [0.0, 0.5, 1.0]]
+        if instance_id is None:
+            instance_id = f"human-{uuid.uuid4().hex[:12]}"
 
         response = self.post(
             "/instances",
@@ -113,10 +117,10 @@ class WorldGenerationApiClient:
                 "alphas": alphas,
                 "variety_domains": variety_domains,
                 "grid_points": grid_points,
-                "instance_id": "human"
+                "instance_id": instance_id,
             },
         )
-        return response["instance_id"]
+        return str(response.get("instance_id", instance_id))
 
     def generate_mapping(self, instance_id: str, request_payload: dict) -> None:
         payload = {
@@ -140,6 +144,8 @@ class WorldGenerationApiClient:
         request_payload: dict,
         batch_size: int = 1,
         priority: int = 0,
+        difficulty: Optional[str] = None,
+        refill_threshold: int = 4,
     ) -> Dict[str, Any]:
         """Pull up to `batch_size` levels in a single round-trip (reduces the number
         of HTTP calls needed to keep the prefetch queue warm vs. one call per level)."""
@@ -151,14 +157,19 @@ class WorldGenerationApiClient:
             def rows_to_tilemap(rows):
                 return pd.DataFrame(rows)
 
+        payload = {
+            "agent_name": agent_name,
+            "request": request_payload,
+            "batch_size": max(1, int(batch_size or 1)),
+            "priority": priority,
+            "refill_threshold": max(1, int(refill_threshold or 1)),
+        }
+        if difficulty is not None:
+            payload["difficulty"] = str(difficulty)
+
         response = self.post(
             f"/instances/{instance_id}/pool_manager",
-            {
-                "agent_name": agent_name,
-                "request": request_payload,
-                "batch_size": max(1, int(batch_size or 1)),
-                "priority": priority,
-            },
+            payload,
         )
         tilemaps = response.get("tilemaps") or []
         if not tilemaps and response.get("tilemap") is not None:
@@ -183,6 +194,7 @@ class LevelStreamBuffer:
         request_payload: dict,
         prefetch_levels: int,
         priority: int = 0,
+        difficulty: Optional[str] = None,
     ):
         self.api_client = api_client
         self.instance_id = instance_id
@@ -190,6 +202,7 @@ class LevelStreamBuffer:
         self.request_payload = request_payload
         self.prefetch_levels = max(1, int(prefetch_levels))
         self.priority = priority
+        self.difficulty = str(difficulty) if difficulty is not None else None
         # Fetch several levels per HTTP round-trip instead of one-per-request: cuts
         # the number of pool_manager calls needed to keep the queue warm roughly
         # by a factor of fetch_chunk_size.
@@ -225,6 +238,8 @@ class LevelStreamBuffer:
                 self.request_payload,
                 chunk,
                 self.priority,
+                difficulty=self.difficulty,
+                refill_threshold=max(4, self.prefetch_levels),
             )
         )
         self._pending_count += chunk
@@ -399,6 +414,7 @@ def _build_alpha_streams(
             agent_name=f"{agent_name}|a={alpha}",
             request_payload=stream_request_payload,
             prefetch_levels=prefetch_levels,
+            difficulty=f"alpha:{alpha}",
         )
         # eager bulk prefetch to avoid gameplay stalls when transporting
         stream.refill(min_size=prefetch_levels)
@@ -441,6 +457,7 @@ def _build_streams_for_provided_instance(
             agent_name=f"{agent_name}|provided|i={instance_id}|a={alpha}",
             request_payload=stream_request_payload,
             prefetch_levels=prefetch_levels,
+            difficulty=f"alpha:{alpha}",
         )
         # Keep startup responsive: only warm the initial stream eagerly.
         if idx == 0:
@@ -537,6 +554,27 @@ def _sorted_ranking_entries(entries: List[Dict[str, Any]]) -> List[Dict[str, Any
     return sorted(entries, key=_score_key, reverse=True)
 
 
+def _rank_position(entries: List[Dict[str, Any]], player_name: str) -> int:
+    key = str(player_name or "").strip()
+    ordered = _sorted_ranking_entries(entries)
+    if not key:
+        return len(ordered) + 1
+    for idx, row in enumerate(ordered, start=1):
+        if str(row.get("player", "")).strip() == key:
+            return idx
+    return len(ordered) + 1
+
+
+def _format_rank_change_message(previous_rank: Optional[int], new_rank: int, total: int) -> str:
+    if total <= 0:
+        return "Rank: #1/1"
+    if previous_rank is None or previous_rank <= 0 or previous_rank == new_rank:
+        return f"Rank: #{new_rank}/{total}"
+    if new_rank < previous_rank:
+        return f"Rank improved to #{new_rank}/{total}"
+    return f"Rank dropped to #{new_rank}/{total}"
+
+
 def _save_time_trial_ranking(path: str, entries: List[Dict[str, Any]]) -> None:
     if not path:
         return
@@ -587,6 +625,8 @@ def _draw_between_tries_ui(
     ranking_title: str = "Ranking",
     editable_label: str = "",
     editable_text: str = "",
+    primary_label: str = "PLAY",
+    secondary_label: str = "RESTART",
 ) -> None:
     try:
         import pygame
@@ -599,19 +639,26 @@ def _draw_between_tries_ui(
             renderer.draw(env._gs)
         except Exception:
             pass
+    if not pygame.get_init():
+        return
     screen = getattr(renderer, "_screen", None) if renderer is not None else None
     if screen is None:
         return
 
     width, height = screen.get_size()
     overlay = pygame.Surface((width, height), pygame.SRCALPHA)
-    overlay.fill((8, 10, 20, 170))
+    overlay.fill((10, 14, 26, 160))
     screen.blit(overlay, (0, 0))
 
-    panel = pygame.Rect(max(16, width // 10), max(16, height // 10),
-                        min(width - 32, int(width * 0.74)), min(height - 32, int(height * 0.74)))
-    pygame.draw.rect(screen, (22, 25, 40), panel, border_radius=12)
-    pygame.draw.rect(screen, (205, 215, 255), panel, width=2, border_radius=12)
+    panel = pygame.Rect(
+        max(16, width // 10),
+        max(16, height // 10),
+        min(width - 32, int(width * 0.74)),
+        min(height - 32, int(height * 0.74)),
+    )
+    pygame.draw.rect(screen, (18, 24, 36), panel, border_radius=18)
+    pygame.draw.rect(screen, (120, 170, 255), panel, width=2, border_radius=18)
+    pygame.draw.rect(screen, (31, 44, 72), panel.inflate(-10, -10), border_radius=14)
 
     title_size = max(22, min(34, panel.h // 10))
     main_size = max(16, min(22, panel.h // 16))
@@ -622,58 +669,69 @@ def _draw_between_tries_ui(
     font_small = pygame.font.SysFont("consolas", small_size)
 
     y = panel.y + 18
-    text = font_title.render(title, True, (245, 245, 255))
-    screen.blit(text, (panel.x + 16, y))
-    y += text.get_height() + 10
+    title_label = font_title.render(title, True, (244, 247, 255))
+    screen.blit(title_label, (panel.x + 18, y))
+    y += title_label.get_height() + 12
 
     timer_text = f"TIME LEFT: {_format_clock(countdown_seconds)}"
-    timer_color = (255, 95, 95) if countdown_seconds <= 15.0 else (255, 235, 120)
+    timer_color = (255, 118, 118) if countdown_seconds <= 15.0 else (255, 224, 120)
     timer_label = font_main.render(timer_text, True, timer_color)
-    screen.blit(timer_label, (panel.x + 16, y))
+    screen.blit(timer_label, (panel.x + 18, y))
     y += timer_label.get_height() + 10
 
     if editable_label:
-        editor_label = font_small.render(editable_label, True, (170, 220, 255))
-        screen.blit(editor_label, (panel.x + 16, y))
+        editor_label = font_small.render(editable_label, True, (164, 214, 255))
+        screen.blit(editor_label, (panel.x + 18, y))
         y += editor_label.get_height() + 6
 
-        input_rect = pygame.Rect(panel.x + 16, y, max(220, panel.w - 32), font_main.get_height() + 16)
-        pygame.draw.rect(screen, (12, 15, 26), input_rect, border_radius=8)
-        pygame.draw.rect(screen, (205, 215, 255), input_rect, width=2, border_radius=8)
+        input_rect = pygame.Rect(panel.x + 18, y, max(220, panel.w - 36), font_main.get_height() + 16)
+        pygame.draw.rect(screen, (10, 16, 28), input_rect, border_radius=10)
+        pygame.draw.rect(screen, (154, 199, 255), input_rect, width=2, border_radius=10)
 
         shown_text = editable_text or " "
-        input_text = font_main.render(shown_text, True, (245, 245, 255))
+        input_text = font_main.render(shown_text, True, (246, 248, 255))
         screen.blit(input_text, (input_rect.x + 10, input_rect.y + 8))
 
         caret_x = min(input_rect.right - 12, input_rect.x + 10 + input_text.get_width() + 2)
         pygame.draw.line(screen, (255, 235, 120), (caret_x, input_rect.y + 6), (caret_x, input_rect.bottom - 6), 2)
         y = input_rect.bottom + 12
 
-    hint_label = font_small.render(hint_text, True, (255, 255, 255))
-    footer_y = panel.bottom - hint_label.get_height() - 14
+    footer_y = panel.bottom - 52
     line_gap = max(4, small_size // 3)
     section_gap = max(8, small_size // 2)
 
-    available_summary_h = max(0, footer_y - y)
+    available_summary_h = max(0, footer_y - 64 - y)
     max_summary_lines = max(1, min(8, available_summary_h // max(1, font_small.get_height() + line_gap)))
-    shown_summary = summary_lines[:max_summary_lines]
-    for line in shown_summary:
-        screen.blit(font_small.render(line, True, (242, 242, 242)), (panel.x + 16, y))
+    for line in summary_lines[:max_summary_lines]:
+        screen.blit(font_small.render(line, True, (236, 240, 255)), (panel.x + 18, y))
         y += font_small.get_height() + line_gap
 
     if ranking_lines and y < footer_y - (font_main.get_height() + font_small.get_height() + section_gap):
         y += section_gap
         ranking_label = font_main.render(ranking_title, True, (170, 220, 255))
-        screen.blit(ranking_label, (panel.x + 16, y))
-        y += ranking_label.get_height() + 8
+        screen.blit(ranking_label, (panel.x + 18, y))
+        y += ranking_label.get_height() + 6
 
-        available_rank_h = max(0, footer_y - y)
-        max_ranking_lines = max(1, min(6, available_rank_h // max(1, font_small.get_height() + line_gap)))
+        available_rank_h = max(0, footer_y - y - 12)
+        max_ranking_lines = max(1, min(5, available_rank_h // max(1, font_small.get_height() + line_gap)))
         for line in ranking_lines[:max_ranking_lines]:
-            screen.blit(font_small.render(line, True, (220, 235, 255)), (panel.x + 16, y))
+            screen.blit(font_small.render(line, True, (214, 228, 255)), (panel.x + 18, y))
             y += font_small.get_height() + line_gap
 
-    screen.blit(hint_label, (panel.x + 16, footer_y))
+    primary_rect = pygame.Rect(panel.right - 192, footer_y, 156, 30)
+    secondary_rect = pygame.Rect(panel.x + 18, footer_y, 146, 30)
+    pygame.draw.rect(screen, (84, 214, 132), primary_rect, border_radius=10)
+    pygame.draw.rect(screen, (91, 129, 239), secondary_rect, border_radius=10)
+    pygame.draw.rect(screen, (230, 239, 255), primary_rect, width=1, border_radius=10)
+    pygame.draw.rect(screen, (230, 239, 255), secondary_rect, width=1, border_radius=10)
+
+    primary_label_surf = font_main.render(primary_label, True, (8, 18, 24))
+    secondary_label_surf = font_main.render(secondary_label, True, (240, 244, 255))
+    screen.blit(primary_label_surf, (primary_rect.centerx - primary_label_surf.get_width() // 2, primary_rect.centery - primary_label_surf.get_height() // 2))
+    screen.blit(secondary_label_surf, (secondary_rect.centerx - secondary_label_surf.get_width() // 2, secondary_rect.centery - secondary_label_surf.get_height() // 2))
+
+    hint_label = font_small.render(hint_text, True, (245, 247, 255))
+    screen.blit(hint_label, (panel.x + 18, panel.bottom - 24))
 
     pygame.display.flip()
     if renderer is not None and getattr(renderer, "_clock", None):
@@ -692,10 +750,14 @@ def _intermission_wait(
     editable_label: str = "",
     initial_text: str = "",
     max_text_length: int = 24,
+    primary_label: str = "PLAY",
+    secondary_label: str = "RESTART",
 ) -> HoldHudResult:
     try:
         import pygame
     except ImportError:
+        return HoldHudResult(action="continue", text=initial_text)
+    if not pygame.get_init():
         return HoldHudResult(action="continue", text=initial_text)
 
     current_text = str(initial_text or "")[:max(1, int(max_text_length))]
@@ -710,19 +772,29 @@ def _intermission_wait(
             if event.type == pygame.QUIT:
                 return HoldHudResult(action="quit", text=current_text)
             if event.type == pygame.KEYDOWN:
+                typed = str(getattr(event, "unicode", "") or "")
+
+                if editable_label:
+                    if event.key == pygame.K_RETURN:
+                        return HoldHudResult(action="continue", text=current_text)
+                    if event.key == pygame.K_BACKSPACE:
+                        current_text = current_text[:-1]
+                        continue
+                    if typed and typed.isprintable() and len(current_text) < max(1, int(max_text_length)):
+                        current_text += typed
+                        continue
+                    if event.key in (pygame.K_q, pygame.K_ESCAPE):
+                        continue
+                    if event.key == pygame.K_r:
+                        continue
+                    continue
+
                 if event.key in (pygame.K_q, pygame.K_ESCAPE):
                     return HoldHudResult(action="quit", text=current_text)
                 if event.key in (pygame.K_RETURN, pygame.K_SPACE):
                     return HoldHudResult(action="continue", text=current_text)
                 if event.key == pygame.K_r:
                     return HoldHudResult(action="restart", text=current_text)
-                if editable_label:
-                    if event.key == pygame.K_BACKSPACE:
-                        current_text = current_text[:-1]
-                    else:
-                        typed = str(getattr(event, "unicode", "") or "")
-                        if typed and typed.isprintable() and len(current_text) < max(1, int(max_text_length)):
-                            current_text += typed
 
         _draw_between_tries_ui(
             env=env,
@@ -735,6 +807,8 @@ def _intermission_wait(
             ranking_title=ranking_title,
             editable_label=editable_label,
             editable_text=current_text,
+            primary_label=primary_label,
+            secondary_label=secondary_label,
         )
 
 
@@ -1838,20 +1912,27 @@ def run_survival_time_trial(
         print("  Objective: survive as long as possible before the clock reaches zero")
         print("=" * 50)
 
+        ordered_entry_rows = _sorted_ranking_entries(ranking_entries)
+        ranked_lines = [
+            f"#{idx} {row.get('player', 'unknown')} {float(row.get('survived_seconds', 0.0) or 0.0):.1f}s"
+            for idx, row in enumerate(ordered_entry_rows[:5], start=1)
+        ] or ["No runs logged yet"]
         start_hold = _intermission_wait(
             env=env,
-            title="Get Ready",
+            title="Ready to Run",
             summary_lines=[
                 f"Objective: survive with {lives_total} lives and a shared timer",
                 f"Blue pipes add +{bonus_time_blue_pipe_seconds:.0f}s when available",
                 "Unplayed nearby preview worlds are recycled on retries when possible",
             ],
-            ranking_lines=[],
+            ranking_lines=ranked_lines,
             timer_deadline=time.monotonic() + 3600.0,
             fps=fps,
             hint_text="ENTER/SPACE: start   R: restart run   Q/ESC: quit",
             editable_label="PLAYER NAME",
             initial_text=current_player_name,
+            primary_label="PLAY",
+            secondary_label="RESTART",
         )
         current_player_name = str(start_hold.text or current_player_name).strip() or "human_player"
         _rename_lane_agent_names(alpha_streams, current_player_name)
@@ -2046,10 +2127,15 @@ def run_survival_time_trial(
                         f"Time left: {_format_clock(remaining)}",
                         f"Last life reward: {life_reward:.1f}",
                     ],
-                    ranking_lines=[],
+                    ranking_lines=[
+                        f"#{idx} {row.get('player', 'unknown')} {float(row.get('survived_seconds', 0.0) or 0.0):.1f}s"
+                        for idx, row in enumerate(_sorted_ranking_entries(ranking_entries)[:5], start=1)
+                    ] or ["No runs logged yet"],
                     timer_deadline=time.monotonic() + 3600.0,
                     fps=fps,
-                    hint_text="ENTER/SPACE: next life   R: restart run   Q/ESC: quit",
+                    hint_text="ENTER/SPACE: next try   R: restart run   Q/ESC: quit",
+                    primary_label="NEXT TRY",
+                    secondary_label="RESTART",
                 )
                 if hold_result.action == "restart":
                     restart_requested = True
@@ -2126,6 +2212,8 @@ def run_survival_time_trial(
                     timer_deadline=time.monotonic() + 3600.0,
                     fps=fps,
                     hint_text="ENTER/SPACE: finish   R: restart run   Q/ESC: quit",
+                    primary_label="CONTINUE",
+                    secondary_label="RESTART",
                 )
             except Exception:
                 pass
@@ -2172,6 +2260,7 @@ def run_survival_time_trial(
 
     final_entry = make_entry()
     final_entry["tries"] = list(tries)
+    previous_rank = _rank_position(ranking_entries, current_player_name)
     ranking_entries.append(final_entry)
     ordered = _sorted_ranking_entries(ranking_entries)
     rank = 1
@@ -2221,6 +2310,89 @@ def run_survival_time_trial(
             "total": len(ordered),
         },
     )
+
+    rank_change_message = _format_rank_change_message(previous_rank, rank, len(ordered))
+    final_summary_lines = [
+        f"Run ended: {run_end_reason}",
+        f"Survived: {final_entry['survived_seconds']:.1f}s",
+        f"Bonus time: +{final_entry['bonus_time_seconds']:.1f}s",
+        f"Remaining: {final_entry['remaining_seconds']:.1f}s",
+        f"Current rank: #{rank}/{len(ordered)}",
+    ]
+    if previous_rank not in (None, 0) and previous_rank != rank:
+        final_summary_lines.append(rank_change_message)
+
+    ranking_preview = [
+        f"#{idx} {row.get('player', 'unknown')} {float(row.get('survived_seconds', 0.0) or 0.0):.1f}s"
+        for idx, row in enumerate(ordered[:5], start=1)
+    ]
+    final_hold = _intermission_wait(
+        env=env,
+        title="Game Over",
+        summary_lines=final_summary_lines,
+        ranking_lines=ranking_preview,
+        timer_deadline=time.monotonic() + 3600.0,
+        fps=fps,
+        hint_text="ENTER/SPACE: play again   R: restart run   Q/ESC: quit",
+        ranking_title="Ranking",
+        primary_label="PLAY AGAIN",
+        secondary_label="RESTART",
+    )
+
+    if final_hold.action in ("continue", "timeout"):
+        return run_survival_time_trial(
+            map_path=map_path,
+            fps=fps,
+            infinite_mode=infinite_mode,
+            api_base_url=api_base_url,
+            instance_id=instance_id,
+            agent_name=current_player_name,
+            case_id=case_id,
+            pool_request_payload=pool_request_payload,
+            alpha_schedule=alpha_schedule,
+            alpha_full_interval=alpha_full_interval,
+            pipe_alpha_step=pipe_alpha_step,
+            alpha_window_size=alpha_window_size,
+            prefetch_levels=prefetch_levels,
+            append_trigger_tiles=append_trigger_tiles,
+            rare_pipe_replace_rate=rare_pipe_replace_rate,
+            rare_pipe_blue_share=rare_pipe_blue_share,
+            rare_pipe_seed=rare_pipe_seed,
+            rare_pipe_guarantee_window=rare_pipe_guarantee_window,
+            initial_time_seconds=initial_time_seconds,
+            lives_total=lives_total,
+            bonus_time_coin_seconds=bonus_time_coin_seconds,
+            bonus_time_kill_seconds=bonus_time_kill_seconds,
+            bonus_time_blue_pipe_seconds=bonus_time_blue_pipe_seconds,
+            ranking_path=ranking_path,
+        )
+    if final_hold.action == "restart":
+        return run_survival_time_trial(
+            map_path=map_path,
+            fps=fps,
+            infinite_mode=infinite_mode,
+            api_base_url=api_base_url,
+            instance_id=instance_id,
+            agent_name=current_player_name,
+            case_id=case_id,
+            pool_request_payload=pool_request_payload,
+            alpha_schedule=alpha_schedule,
+            alpha_full_interval=alpha_full_interval,
+            pipe_alpha_step=pipe_alpha_step,
+            alpha_window_size=alpha_window_size,
+            prefetch_levels=prefetch_levels,
+            append_trigger_tiles=append_trigger_tiles,
+            rare_pipe_replace_rate=rare_pipe_replace_rate,
+            rare_pipe_blue_share=rare_pipe_blue_share,
+            rare_pipe_seed=rare_pipe_seed,
+            rare_pipe_guarantee_window=rare_pipe_guarantee_window,
+            initial_time_seconds=initial_time_seconds,
+            lives_total=lives_total,
+            bonus_time_coin_seconds=bonus_time_coin_seconds,
+            bonus_time_kill_seconds=bonus_time_kill_seconds,
+            bonus_time_blue_pipe_seconds=bonus_time_blue_pipe_seconds,
+            ranking_path=ranking_path,
+        )
 
     print(f"Run ended: {run_end_reason}")
     print(
@@ -2314,7 +2486,7 @@ def main() -> None:
         default=0.2,
         help="Dynamic alpha window length used for each instance around schedule alpha (default: %(default)s)",
     )
-    parser.add_argument("--level-len", type=int, default=40,
+    parser.add_argument("--level-len", type=int, default=80,
                         help="Level length for pool manager requests (default: %(default)s)")
     parser.add_argument("--batch-size", type=int, default=1,
                         help="Batch size for pool manager requests (default: %(default)s)")

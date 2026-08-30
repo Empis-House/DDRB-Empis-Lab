@@ -1,8 +1,19 @@
-# DDRB Empis Lab
+# Level Up: Dinamic Difficulty-Reward Balancing 
+A research about learning optimization on the AI Super Mario Bros. Framework.
 
-DDRB Empis Lab is a research workspace for Super Mario Bros. procedural content generation, level evaluation, and reinforcement learning. The repository combines a FastAPI-based world-generation service with a custom Gymnasium-style Mario environment for training, benchmarking, and human play.
+## Abstract
 
-World generation architecture is an aplication of Dinamic Difficulty-Reward Balancing which is descripted on WorkPaper.md .
+Difficulty adjustment is a core design decision in games and education alike. The video game industry has studied how to balance difficulty to maintain player engagement for decades, leading to a specialized field focused on automatic adjustment: Dynamic Difficulty Adjustment (DDA). Although DDA is extensively studied in games, it originated in cognitive science as Csikszentmihalyi's flow theory (1970). However, the transition from flow theory to DDA has lost both applicability to other contexts (such as education) and explicit consideration of factors beyond difficulty that are equally relevant to dynamic adjustment.
+
+This project reconceptualizes DDA as an abstract learning problem grounded in flow theory, proposing it as a new paradigm for AI-supported educational systems. Specifically, we present a Dynamic Difficulty-Reward Balancing (DDRB) pipeline that encourages flow-theoretic conditions and extends automatic adjustment to consider both task challenge and environmental economy. By doing so, the dynamic balancing system implicitly addresses more complex aspects of frustration and boredom, moving beyond binary task feasibility to evaluate whether a task is worthwhile in the learner's context.
+
+As an initial experiment, we use the Super Mario Bros framework (a widely studied computational benchmark) reframing it not as an engaging game but as a learning task with an optimal learning curve. Rather than training from human gameplay, which would be prohibitively ambitious, we leverage the extensive literature on SMB agents to train and test our model. Our core hypothesis is that DDRB improves agent robustness and convergence compared to existing methods. We additionally hypothesize that agent behaviour provides sufficient diversity to correlate with human learning experience.
+
+Look at WorkPaper.md 
+
+# DDRB Lab
+
+DDRB Lab is a research workspace for Super Mario Bros. procedural content generation, level evaluation, and reinforcement learning. The repository combines a FastAPI-based world-generation service with a custom Gymnasium-style Mario environment for training, benchmarking, and human play.
 
 ## What this repository contains
 

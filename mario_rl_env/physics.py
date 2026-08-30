@@ -19,6 +19,9 @@ try:
         TILE_SIZE,
         GRAVITY, MAX_FALL_SPEED,
         MARIO_WALK_SPEED, MARIO_RUN_SPEED, MARIO_JUMP_VY,
+        MARIO_WALK_ACCEL, MARIO_RUN_ACCEL, MARIO_AIR_ACCEL,
+        MARIO_FRICTION, MARIO_AIR_FRICTION,
+        MARIO_COYOTE_FRAMES, MARIO_JUMP_BUFFER_FRAMES,
         GOOMBA_SPEED,
     )
     from .tilemap import TileMap, TileType
@@ -28,6 +31,9 @@ except ImportError:
         TILE_SIZE,
         GRAVITY, MAX_FALL_SPEED,
         MARIO_WALK_SPEED, MARIO_RUN_SPEED, MARIO_JUMP_VY,
+        MARIO_WALK_ACCEL, MARIO_RUN_ACCEL, MARIO_AIR_ACCEL,
+        MARIO_FRICTION, MARIO_AIR_FRICTION,
+        MARIO_COYOTE_FRAMES, MARIO_JUMP_BUFFER_FRAMES,
         GOOMBA_SPEED,
     )
     from tilemap import TileMap, TileType
@@ -57,6 +63,14 @@ def _tiles_for_rect(x: float, y: float, w: int, h: int):
 
 # ── Mario movement ─────────────────────────────────────────────────────────────
 
+def _approach(value: float, target: float, max_delta: float) -> float:
+    if value < target:
+        return min(value + max_delta, target)
+    if value > target:
+        return max(value - max_delta, target)
+    return target
+
+
 def move_mario(mario: Mario, tilemap: TileMap, actions: dict) -> dict:
     """
     Apply one physics frame to *mario* given a dict of active actions:
@@ -83,24 +97,49 @@ def move_mario(mario: Mario, tilemap: TileMap, actions: dict) -> dict:
         mario.y += mario.vy
         return events
 
-    speed = MARIO_RUN_SPEED if actions.get('run') else MARIO_WALK_SPEED
-
-    # ── horizontal input ──────────────────────────────────────────────────
-    if actions.get('right'):
-        mario.vx = speed
-        mario.facing_right = True
-    elif actions.get('left'):
-        mario.vx = -speed
-        mario.facing_right = False
-    else:
-        mario.vx = 0.0
-
     mario.running = bool(actions.get('run'))
+    move_left = bool(actions.get('left'))
+    move_right = bool(actions.get('right'))
+    speed = MARIO_RUN_SPEED if mario.running else MARIO_WALK_SPEED
 
-    # ── jump ──────────────────────────────────────────────────────────────
-    if actions.get('jump') and mario.on_ground:
+    # ── jump buffering + coyote time ──────────────────────────────────────
+    if actions.get('jump'):
+        mario.jump_buffer = MARIO_JUMP_BUFFER_FRAMES
+    elif mario.jump_buffer > 0:
+        mario.jump_buffer -= 1
+
+    if mario.on_ground:
+        mario.coyote_time = MARIO_COYOTE_FRAMES
+
+    # Keep the current coyote grace available for the same frame so a jump
+    # pressed just after leaving the ground still triggers as expected.
+    if mario.jump_buffer > 0 and (mario.on_ground or mario.coyote_time > 0):
         mario.vy = MARIO_JUMP_VY
         mario.on_ground = False
+        mario.coyote_time = 0
+        mario.jump_buffer = 0
+
+    if not mario.on_ground and mario.coyote_time > 0:
+        mario.coyote_time -= 1
+
+    # ── horizontal input ──────────────────────────────────────────────────
+    if move_right and not move_left:
+        mario.facing_right = True
+        target_vx = speed
+    elif move_left and not move_right:
+        mario.facing_right = False
+        target_vx = -speed
+    else:
+        target_vx = 0.0
+
+    if target_vx == 0.0:
+        friction = MARIO_FRICTION if mario.on_ground else MARIO_AIR_FRICTION
+        mario.vx = _approach(mario.vx, 0.0, friction)
+    else:
+        accel_rate = MARIO_RUN_ACCEL if mario.running else MARIO_WALK_ACCEL
+        if not mario.on_ground:
+            accel_rate *= 0.7
+        mario.vx = _approach(mario.vx, target_vx, accel_rate)
 
     # ── gravity ───────────────────────────────────────────────────────────
     mario.vy = min(mario.vy + GRAVITY, MAX_FALL_SPEED)
