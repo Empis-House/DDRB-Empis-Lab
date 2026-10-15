@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
 
@@ -281,6 +282,19 @@ def _get_structures_df() -> pd.DataFrame:
         raise HTTPException(status_code=500, detail=f"Could not load structures dataframe: {exc}")
 
 
+def _wait_for_generation_job(job_id: str, timeout: float = 600.0):
+    deadline = time.monotonic() + timeout
+    while True:
+        job = _GENERATION_QUEUE_ROUTER.get_job(job_id)
+        if job is None:
+            raise HTTPException(status_code=404, detail=f"job '{job_id}' not found")
+        if job.status in {"completed", "failed"}:
+            return job
+        if time.monotonic() >= deadline:
+            raise HTTPException(status_code=504, detail=f"job '{job_id}' did not finish in time")
+        time.sleep(0.01)
+
+
 @app.on_event("startup")
 def create_instance_store() -> None:
     state_dir = Path(__file__).resolve().parent / "instances"
@@ -393,7 +407,35 @@ def generate_mapping(instance_id: str, payload: GenerateMappingRequest) -> Gener
         default_workflow="train",
         default_split="train",
     )
-    job = _GENERATION_QUEUE_ROUTER.submit(contract)
+    def _do_generate() -> Dict[str, Any]:
+        instance.refresh_generated_mapping(
+            clear_manager_memory=True,
+            example_code=payload.example_code,
+            Level_Len=payload.Level_Len,
+            module=payload.module,
+            batch_size=payload.batch_size,
+            epochs=payload.epochs,
+            seed=payload.seed,
+            Game_Mode=payload.Game_Mode,
+            observability=payload.observability,
+            use_grammar_degree_grid=payload.use_grammar_degree_grid,
+            grammar_min_degree=payload.grammar_min_degree,
+            grammar_end_out_degree=payload.grammar_end_out_degree,
+            grammar_bulk_repeats=payload.grammar_bulk_repeats,
+            grammar_max_attempts=payload.grammar_max_attempts,
+        )
+        return {
+            "status": "generated",
+            "instance_id": instance_id,
+            "optimal_count": instance.get_optimal_count(),
+            "generation": instance.get_current_generation(),
+        }
+
+    job = _GENERATION_QUEUE_ROUTER.run_async(
+        contract,
+        _do_generate,
+        on_done=lambda completed_job: _record_lineage(instance_id, completed_job, status=completed_job.status),
+    )
     if job.job_id != contract.request_id:
         return GenerateMappingResponse(
             status="duplicate",
@@ -411,29 +453,9 @@ def generate_mapping(instance_id: str, payload: GenerateMappingRequest) -> Gener
             run_id=job.request.params.get("run_id"),
         )
 
-    try:
-        instance.refresh_generated_mapping(
-            clear_manager_memory=True,
-            example_code=payload.example_code,
-            Level_Len=payload.Level_Len,
-            module=payload.module,
-            batch_size=payload.batch_size,
-            epochs=payload.epochs,
-            seed=payload.seed,
-            Game_Mode=payload.Game_Mode,
-            observability=payload.observability,
-            use_grammar_degree_grid=payload.use_grammar_degree_grid,
-            grammar_min_degree=payload.grammar_min_degree,
-            grammar_end_out_degree=payload.grammar_end_out_degree,
-            grammar_bulk_repeats=payload.grammar_bulk_repeats,
-            grammar_max_attempts=payload.grammar_max_attempts,
-        )
-    except Exception as exc:
-        _GENERATION_QUEUE_ROUTER.mark_failed(job.job_id, str(exc), lane=job.lane)
-        _record_lineage(instance_id, job, status="failed")
-        raise
-    _GENERATION_QUEUE_ROUTER.mark_done(job.job_id, lane=job.lane)
-    _record_lineage(instance_id, job, status="completed")
+    job = _wait_for_generation_job(job.job_id)
+    if job.status == "failed":
+        raise HTTPException(status_code=500, detail=job.error or "Generation failed")
     return GenerateMappingResponse(
         status="generated",
         instance_id=instance_id,
@@ -470,8 +492,7 @@ def pool_manager(instance_id: str, payload: PoolManagerRequest) -> PoolManagerRe
     )
     contract.params.setdefault("queue_key", queue_key)
     contract.params.setdefault("agent_name", agent_name)
-    job = _GENERATION_QUEUE_ROUTER.submit(contract)
-    try:
+    def _do_pool() -> Dict[str, Any]:
         tilemaps = instance.pool_manager(
             agent_name,
             payload.request,
@@ -482,18 +503,32 @@ def pool_manager(instance_id: str, payload: PoolManagerRequest) -> PoolManagerRe
             difficulty=payload.difficulty,
             refill_threshold=payload.refill_threshold,
         )
+        queue_state = instance.get_queue_snapshot(queue_key)
+        serialized_tilemaps = [_serialize_tilemap(tilemap) for tilemap in tilemaps]
+        return {
+            "tilemaps": serialized_tilemaps,
+            "pending": int(queue_state.get("pending", 0)),
+            "max_pending": int(queue_state.get("max_pending", payload.max_pending)),
+            "dead_letter_count": int(queue_state.get("dead_letter_count", 0)),
+        }
+
+    try:
+        job = _GENERATION_QUEUE_ROUTER.run_async(
+            contract,
+            _do_pool,
+            on_done=lambda completed_job: _record_lineage(instance_id, completed_job, status=completed_job.status),
+        )
     except QueueBackpressureError as exc:
-        _GENERATION_QUEUE_ROUTER.mark_failed(job.job_id, str(exc), lane=job.lane)
-        _record_lineage(instance_id, job, status="failed")
         raise HTTPException(status_code=429, detail=str(exc))
-    except Exception as exc:
-        _GENERATION_QUEUE_ROUTER.mark_failed(job.job_id, str(exc), lane=job.lane)
-        _record_lineage(instance_id, job, status="failed")
-        raise
-    _GENERATION_QUEUE_ROUTER.mark_done(job.job_id, lane=job.lane)
-    _record_lineage(instance_id, job, status="completed")
-    queue_state = instance.get_queue_snapshot(queue_key)
-    serialized_tilemaps = [_serialize_tilemap(tilemap) for tilemap in tilemaps]
+    if job.job_id != contract.request_id:
+        raise HTTPException(status_code=409, detail=f"Duplicate pool job '{job.job_id}'")
+    job = _wait_for_generation_job(job.job_id)
+    if job.status == "failed":
+        if job.error and "backpressure" in job.error.lower():
+            raise HTTPException(status_code=429, detail=job.error)
+        raise HTTPException(status_code=500, detail=job.error or "Pool manager failed")
+    result = job.result or {}
+    serialized_tilemaps = result.get("tilemaps", [])
     return PoolManagerResponse(
         instance_id=instance_id,
         agent_name=agent_name,
@@ -504,9 +539,9 @@ def pool_manager(instance_id: str, payload: PoolManagerRequest) -> PoolManagerRe
         tilemaps=serialized_tilemaps,
         case_id=payload.case_id,
         queue_key=queue_key,
-        pending=int(queue_state.get("pending", 0)),
-        max_pending=int(queue_state.get("max_pending", payload.max_pending)),
-        dead_letter_count=int(queue_state.get("dead_letter_count", 0)),
+        pending=int(result.get("pending", 0)),
+        max_pending=int(result.get("max_pending", payload.max_pending)),
+        dead_letter_count=int(result.get("dead_letter_count", 0)),
         job_id=job.job_id,
         job_status="completed",
         queue_lane=job.lane,
@@ -690,7 +725,6 @@ def performance_predict(payload: PerformancePredictRequest) -> PerformancePredic
     agent_name = None
     if payload.agent_name is not None or payload.agent_id is not None:
         agent_name = _resolve_agent_name(payload.agent_name, payload.agent_id)
-    status = get_performance_model_status(agent_id=agent_name)
     try:
         score = performance(
             payload.level,
@@ -703,6 +737,7 @@ def performance_predict(payload: PerformancePredictRequest) -> PerformancePredic
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Could not predict performance: {exc}")
+    status = get_performance_model_status(agent_id=agent_name)
 
     return PerformancePredictResponse(
         score=float(score),

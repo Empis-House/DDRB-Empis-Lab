@@ -75,7 +75,7 @@ def level_string_to_tilemap(level: Any, token_to_structure: Mapping[str, str]) -
     if not level_tokens:
         raise ValueError("empty str level is no plotable")
 
-    tilemap = pd.DataFrame(columns=[f"{i}" for i in range(BAND_HEIGHT)])
+    rows = []
     for key in level_tokens:
         if key not in token_to_structure:
             raise IndexError(f"Not tokenized Structure: {key}")
@@ -86,10 +86,9 @@ def level_string_to_tilemap(level: Any, token_to_structure: Mapping[str, str]) -
             raise ValueError(
                 f"Structure for token '{key}' has {len(row)} rows, expected {BAND_HEIGHT}"
             )
+        rows.append(row)
 
-        tilemap.loc[len(tilemap)] = row
-
-    return tilemap.transpose()
+    return pd.DataFrame(rows, columns=[f"{i}" for i in range(BAND_HEIGHT)]).transpose()
 
 
 def tilemap_to_rows(tilemap: Any) -> List[List[Any]]:

@@ -13,6 +13,7 @@ Check List:
 import random
 import threading
 import json
+import logging
 import pandas as pd
 import numpy as np
 from itertools import product
@@ -23,6 +24,8 @@ from scipy.spatial import distance
 import sys
 import os
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from ml_profiler import profile
 from level_formats import build_token_structure_lookup, level_string_to_tilemap
@@ -78,6 +81,7 @@ class Map_Elite:
             load_structures_df(output_path=_structures_path)
         self.df = pd.read_csv(_structures_path)
         self._token_to_structure = build_token_structure_lookup(self.df)
+        self._structure_to_token = {structure: token for token, structure in self._token_to_structure.items()}
         dfnp = np.transpose(self.df.to_numpy())
         self.Knowledge = dfnp[3:]
 
@@ -88,6 +92,8 @@ class Map_Elite:
         self.__queue_manager      = RequestQueueManager()  # backpressure + priority + dead-letter capture
         self.__difficulty_pool    = DifficultyPoolManager(capacity=32)  # opt-in producer/consumer human-lane pool
         self.__difficulty_recent_served = {}  # difficulty -> deque of recently served level strings (avoid quick repeats)
+        self.__difficulty_refill_state_lock = threading.Lock()
+        self.__difficulty_refills = set()
         if self.__state_path is not None:
             self.__load_manager_state()
 
@@ -319,7 +325,8 @@ class Map_Elite:
 
         for example_code in examples_codes:
             columns_data = {}  # Collect column data here first
-            with open(r"Super_Mario_Brothers_Maps/Processed/mario-{}.txt".format(example_code)) as infile:
+            level_path = Path(__file__).resolve().parent.parent / "Super_Mario_Brothers_Maps" / "Processed" / f"mario-{example_code}.txt"
+            with level_path.open("r", encoding="utf-8") as infile:
                 for i, line in enumerate(infile):
                     columns_data[str(i)] = list(line.split()[0])
 
@@ -330,9 +337,12 @@ class Map_Elite:
         Level = pd.concat(all_temporals, axis=0, ignore_index=True)
 
         Level["Structures"] = Level.apply(self.Structure, axis=1)
-        Level["token"] = [self.Key_substraction(s) for s in Level["Structures"]]
-        
-        return np.concatenate([s.values for s in Level["token"]])
+        try:
+            tokens = [self._structure_to_token[structure] for structure in Level["Structures"]]
+        except KeyError as exc:
+            raise IndexError(f"Not tokenized Structure: {exc.args[0]}") from exc
+
+        return np.asarray(tokens, dtype=np.int64)
     
     def str_to_tilemap(self, Level):
         from Word_Stitching import Jumping_Fiasible_Word
@@ -394,13 +404,16 @@ class Map_Elite:
         if not(module):
             module = Level_Len
 
-        from Word_Stitching import Jumping_Fiasible_Word
         from Grammar_Notation import Grammar
         from plotly.subplots import make_subplots
 
-        level_sec = self.Extract_Level_String([example_code[0]]) 
+        example_codes = [example_code] if isinstance(example_code, str) else list(example_code)
+        if not example_codes:
+            raise ValueError("At least one example_code is required")
+        level_sequences = [self.Extract_Level_String([code]) for code in example_codes]
+        level_sec = level_sequences[0]
 
-        G = Grammar(level_sec,knowledge = self.Knowledge)
+        G = Grammar(level_sec, knowledge=self.Knowledge, additional_examples=level_sequences[1:])
         start_tokens = []
         end_tokens = []
         if use_grammar_degree_grid:
@@ -421,9 +434,14 @@ class Map_Elite:
                 max_attempts=grammar_max_attempts,
             )
         else:
-            pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
-            while not(Jumping_Fiasible_Word(pre_Level, knowledge = self.Knowledge, Game_mod=Game_Mode)):
-                pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
+            pre_Level = self.__generate_constrained_level(
+                grammar=G,
+                level_len=Level_Len,
+                module=module,
+                game_mode=Game_Mode,
+                seed=seed,
+                max_attempts=grammar_max_attempts,
+            )
         self.Quest(pre_Level)
 
         if use_grammar_degree_grid and start_tokens and end_tokens:
@@ -470,11 +488,16 @@ class Map_Elite:
                         )
                         T += 1
                     else:
-                        pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
+                        candidate_seed = None if seed is None else int(seed) + i + (j * max(1, epochs))
+                        pre_Level = self.__generate_constrained_level(
+                            grammar=G,
+                            level_len=Level_Len,
+                            module=module,
+                            game_mode=Game_Mode,
+                            seed=candidate_seed,
+                            max_attempts=grammar_max_attempts,
+                        )
                         T+=1
-                        while not(Jumping_Fiasible_Word(pre_Level, knowledge = self.Knowledge, Game_mod=Game_Mode)):
-                            T+=1
-                            pre_Level = G.N_Level_Generator(Level_Len,module=module,Gen_Game_mod=Game_Mode,seed=seed)._Sequence
                     
                     t+=1
                     self.Quest(pre_Level)
@@ -676,9 +699,12 @@ class Map_Elite:
     def __pool_manager_fill_difficulty(self, difficulty, request, batch_size, refill_threshold):
         refill_threshold = max(1, int(refill_threshold or 1))
         target = max(refill_threshold, batch_size)
-        with self.__refresh_lock:
-            if self.__difficulty_pool.pending(difficulty) < target:
-                self.__refill_difficulty_pool(difficulty, request)
+        if self.__difficulty_pool.pending(difficulty) == 0:
+            with self.__refresh_lock:
+                if self.__difficulty_pool.pending(difficulty) == 0:
+                    self.__refill_difficulty_pool(difficulty, request)
+        elif self.__difficulty_pool.pending(difficulty) < target:
+            self.__schedule_difficulty_refill(difficulty, request, target)
 
         recent = self.__difficulty_recent_served.setdefault(difficulty, deque(maxlen=64))
         chosen = []
@@ -692,7 +718,34 @@ class Map_Elite:
                 level_string = self.__difficulty_pool.consume(difficulty)
             recent.append(level_string)
             chosen.append(self.str_to_tilemap(level_string))
+
+        if self.__difficulty_pool.pending(difficulty) < target:
+            self.__schedule_difficulty_refill(difficulty, request, target)
         return chosen
+
+    def __schedule_difficulty_refill(self, difficulty, request, target):
+        with self.__difficulty_refill_state_lock:
+            if difficulty in self.__difficulty_refills:
+                return
+            self.__difficulty_refills.add(difficulty)
+            worker = threading.Thread(
+                target=self.__run_difficulty_refill,
+                args=(difficulty, request, target),
+                name=f"level-refill-{difficulty}",
+                daemon=True,
+            )
+            worker.start()
+
+    def __run_difficulty_refill(self, difficulty, request, target):
+        try:
+            with self.__refresh_lock:
+                if self.__difficulty_pool.pending(difficulty) < target:
+                    self.__refill_difficulty_pool(difficulty, request)
+        except Exception:
+            logger.exception("Background refill failed for difficulty %s", difficulty)
+        finally:
+            with self.__difficulty_refill_state_lock:
+                self.__difficulty_refills.discard(difficulty)
 
     def __refill_difficulty_pool(self, difficulty, request):
         recent = self.__difficulty_recent_served.setdefault(difficulty, deque(maxlen=64))

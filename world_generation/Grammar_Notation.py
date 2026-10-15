@@ -56,53 +56,59 @@ class Word:
 
 #defining relations between words as an adjacency matrix
 class Graph:
-    def __init__(self, ExampleLevel, WordsList = []):
-        self.Sequence = ExampleLevel.tolist()
-        self.V = list(set(self.Sequence))
-        temp = np.empty((len(self.V),0))
-        self.E = [list(x) for x in temp]
-        del(temp)
-        
-        
-        last_letter = Word([self.Sequence[0]])
-        Starter=True
-        for letter in self.Sequence:
-            letter=Word([letter])
-            if letter == " ":
-                Starter=True
-            elif Starter:
-                Starter=False
-            else: 
-                add_letter = True
-                for l in self.E[self.V.index(last_letter.OpenKey())]:
-                    if l.__repr__() == letter.__repr__():
-                        add_letter = False
-                        
-                if add_letter:
-                    self.E[self.V.index(last_letter.OpenKey())] = self.E[self.V.index(last_letter.OpenKey())]+[letter]
-            
-            last_letter=letter
-            
-        self.E = [list(set(x)) for x in self.E]
-        
+    def __init__(self, ExampleLevel, WordsList = [], additional_examples=None):
+        sequences = [ExampleLevel.tolist()]
+        sequences.extend(
+            example.tolist() if hasattr(example, "tolist") else list(example)
+            for example in (additional_examples or [])
+        )
+        self.Sequence = [token for sequence in sequences for token in sequence]
+        self.V = list(dict.fromkeys(self.Sequence))
+        self.E = [[] for _ in self.V]
+        self._vertex_indices = {token: index for index, token in enumerate(self.V)}
+        adjacency_keys = [set() for _ in self.V]
+
+        for sequence in sequences:
+            for source, destination in zip(sequence, sequence[1:]):
+                source_index = self._vertex_indices[source]
+                edge_key = (destination,)
+                if edge_key not in adjacency_keys[source_index]:
+                    edge = Word([destination])
+                    neighbors = self.E[source_index]
+                    neighbors.append(edge)
+                    adjacency_keys[source_index].add(edge_key)
+
         for word in WordsList:
-            word=Word(word)
-            self.E[self.V.index(word.OpenKey())] = self.E[self.V.index(word.OpenKey())]+[word]
+            edge = Word(word)
+            source_index = self._vertex_indices[edge.OpenKey()]
+            edge_key = tuple(edge._Sequence)
+            if edge_key not in adjacency_keys[source_index]:
+                neighbors = self.E[source_index]
+                neighbors.append(edge)
+                adjacency_keys[source_index].add(edge_key)
+
+        self._non_self_successors = {
+            token: [word for word in self.E[index] if word.OpenKey() != token]
+            for token, index in self._vertex_indices.items()
+        }
 
     # Print the graph
     def print_agraph(self):
         for i in self.V:
             print("Vertex " + str(i) + ":", end="")
-            print(self.E[self.V.index(i)])
+            print(self.Vertixes_of(i))
             
     def Vertixes_of(self, v):
-        return self.E[self.V.index(v)]
+        return self.E[self._vertex_indices[v]]
+
+    def Non_self_Vertixes_of(self, v):
+        return self._non_self_successors[v]
 
     def __len__(self):
         return len(self.V)
 
     def out_degree_map(self):
-        return {v: len(self.E[self.V.index(v)]) for v in self.V}
+        return {v: len(self.E[index]) for v, index in self._vertex_indices.items()}
 
     def in_degree_map(self):
         indegree = {v: 0 for v in self.V}
@@ -120,11 +126,12 @@ class Grammar:
     
     all = []
     
-    def __init__(self, ExampleLevel, knowledge, WordsList = []): 
+    def __init__(self, ExampleLevel, knowledge, WordsList = [], additional_examples=None):
         
         self.__ExampleLevel = ExampleLevel 
         self.__WordsList = WordsList
-        self.__Graph = Graph(self.__ExampleLevel, self.__WordsList)
+        self.__AdditionalExamples = list(additional_examples or [])
+        self.__Graph = Graph(self.__ExampleLevel, self.__WordsList, self.__AdditionalExamples)
         self.___Knowledge = knowledge
             
         Grammar.all = Grammar.all + [self]
@@ -134,7 +141,7 @@ class Grammar:
     
     def Add_Word(self, word):
         self.__WordsList = self.__WordsList + [word]
-        self.__Graph = Graph(self.__ExampleLevel, self.WordsList)
+        self.__Graph = Graph(self.__ExampleLevel, self.WordsList, self.__AdditionalExamples)
         
     def Words_List(self):
         return self.__WordsList
@@ -217,68 +224,80 @@ class Grammar:
         return #Reducted_Blacklist ##not implemented yet
     
     #Generates a level of size N from a given grammar
-    def N_Level_Generator(self, N, from_key = '', seed = None, module = 10, Gen_Game_mod=0):
-        New_Level = Word([])
-        random.seed(seed)
-        #we don't talk about this part
-        module = max(10,module)
-
+    def N_Level_Generator(self, N, from_key = '', seed = None, module = 10, Gen_Game_mod=0, max_attempts=256):
         from Word_Stitching import Jumping_Fiasible_Word
 
-        if N<= 0:
+        if N <= 0:
             return Word([])
-        if N<=module:
-            #from_keys with the level not being feasible
-            Feasible_Level = False
-            while not(Feasible_Level):
-                #if from_key is not given, it is selected randomly
-                if  from_key == '':
-                    n = int(len(self.__Graph.V)*random.random())
-                    New_Level = Word([self.__Graph.V[n]])
-                #check if from_key is in graph, else level can't be generated
-                elif from_key in self.__Graph.V:
-                    n = int(len(self.__Graph.Vertixes_of(from_key))* random.random())
-                    new_Word = self.__Graph.Vertixes_of(from_key)[n]
-                    New_Level = New_Level + new_Word
+        if from_key and from_key not in self.__Graph.V:
+            raise ValueError(f"Invalid from_key '{from_key}' for current grammar graph")
+
+        module = max(10, int(module))
+        max_attempts = max(1, int(max_attempts))
+        rng = random.Random(seed)
+
+        if N <= module:
+            if not self.__Graph.V:
+                raise RuntimeError("Cannot generate a level from an empty grammar graph")
+
+            for _ in range(max_attempts):
+                if from_key:
+                    start_words = self.__Graph.Vertixes_of(from_key)
+                    if not start_words:
+                        break
+                    new_sequence = list(rng.choice(start_words)._Sequence)
                 else:
-                    print("invalid from_key")
-                    return
-                
-                i=0
-                while not(Jumping_Fiasible_Word(New_Level._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
-                    #print("no fiasible level")
-                    if from_key == '':
-                        n = int(len(self.__Graph.V)*random.random())
-                        New_Level = Word([self.__Graph.V[n]])
-                    elif i>10:
-                        New_Level = Word([from_key])
-                        from_key = ''
-                    else:
-                        n = int(len(self.__Graph.Vertixes_of(from_key))* random.random())
-                        new_Word = self.__Graph.Vertixes_of(from_key)[n]
-                        New_Level = New_Level + new_Word
-                    i=i+1
-                
-                    
-                #continue adding valid words to the final level until the end
-                #you need to observe the relations in the graph
-                while len(New_Level)<N:
-                    n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
-                    new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
-                    while new_Word.OpenKey() == New_Level.CloseKey():
-                        n = int(len(self.__Graph.Vertixes_of(New_Level.CloseKey()))* random.random())
-                        new_Word = self.__Graph.Vertixes_of(New_Level.CloseKey())[n]
-                    New_Level = New_Level + new_Word
-                Feasible_Level = Jumping_Fiasible_Word(New_Level._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)
-            return New_Level
-        else:
-            for i in range(N//module):
-                Level_Piece = self.N_Level_Generator(module,New_Level.CloseKey(),module=max(10,int(module/2)))
-                while not(Jumping_Fiasible_Word(Level_Piece._Sequence, knowledge = self.___Knowledge, Game_mod=Gen_Game_mod)):
-                    Level_Piece = self.N_Level_Generator(module,New_Level.CloseKey(),module=max(10,int(module/2)))
-                New_Level = New_Level + Level_Piece
-            New_Level = New_Level + self.N_Level_Generator(N%module,New_Level.CloseKey(),module=module)
-            return New_Level
+                    new_sequence = [rng.choice(self.__Graph.V)]
+
+                if not Jumping_Fiasible_Word(
+                    new_sequence,
+                    knowledge=self.___Knowledge,
+                    Game_mod=Gen_Game_mod,
+                ):
+                    continue
+
+                while len(new_sequence) < N:
+                    successors = self.__Graph.Non_self_Vertixes_of(new_sequence[-1])
+                    if not successors:
+                        break
+                    new_sequence.extend(rng.choice(successors)._Sequence)
+
+                if len(new_sequence) == N and Jumping_Fiasible_Word(
+                    new_sequence,
+                    knowledge=self.___Knowledge,
+                    Game_mod=Gen_Game_mod,
+                ):
+                    return Word(new_sequence)
+
+            raise RuntimeError(f"Could not generate a feasible level of length {N} within {max_attempts} attempts")
+
+        smaller_module = max(10, module // 2)
+        for _ in range(max_attempts):
+            new_sequence = []
+            while len(new_sequence) < N:
+                piece_length = min(module, N - len(new_sequence))
+                piece_seed = rng.randrange(0, 2**32)
+                try:
+                    level_piece = self.N_Level_Generator(
+                        piece_length,
+                        from_key=new_sequence[-1] if new_sequence else '',
+                        seed=piece_seed,
+                        module=smaller_module,
+                        Gen_Game_mod=Gen_Game_mod,
+                        max_attempts=1,
+                    )
+                except RuntimeError:
+                    break
+                new_sequence.extend(level_piece._Sequence)
+
+            if len(new_sequence) == N and Jumping_Fiasible_Word(
+                new_sequence,
+                knowledge=self.___Knowledge,
+                Game_mod=Gen_Game_mod,
+            ):
+                return Word(new_sequence)
+
+        raise RuntimeError(f"Could not generate a feasible level of length {N} within {max_attempts} attempts")
 
     def N_Level_Generator_Constrained(self,
                                       N,
@@ -303,13 +322,17 @@ class Grammar:
 
         for attempt in range(max_attempts):
             local_seed = None if base_seed is None else base_seed + attempt
-            candidate = self.N_Level_Generator(
-                N,
-                from_key=from_key,
-                seed=local_seed,
-                module=module,
-                Gen_Game_mod=Gen_Game_mod,
-            )
+            try:
+                candidate = self.N_Level_Generator(
+                    N,
+                    from_key=from_key,
+                    seed=local_seed,
+                    module=module,
+                    Gen_Game_mod=Gen_Game_mod,
+                    max_attempts=1,
+                )
+            except RuntimeError:
+                continue
             if end_set is None or candidate.CloseKey() in end_set:
                 return candidate
 

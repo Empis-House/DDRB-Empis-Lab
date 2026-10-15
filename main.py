@@ -231,6 +231,51 @@ def api_post(path, payload, run_id: str = "-", trace_tag: str = "-", request_id:
         )
         raise RuntimeError(f"API connection failed: {exc.reason}")
 
+
+def api_get(path, run_id: str = "-", trace_tag: str = "-", quiet: bool = False):
+    url = f"{API_BASE_URL}{path}"
+    request = Request(url, headers={"Content-Type": "application/json"})
+    try:
+        with urlopen(request) as response:
+            result = json.load(response)
+            _log(
+                run_id,
+                "api.get",
+                "response",
+                quiet=quiet,
+                trace=trace_tag,
+                path=path,
+                status=response.status,
+                keys=list(result.keys()) if isinstance(result, dict) else type(result).__name__,
+            )
+            return result
+    except HTTPError as exc:
+        message = exc.read().decode("utf-8", errors="ignore")
+        raise RuntimeError(f"API request failed: {exc.code} {exc.reason} {message}")
+    except URLError as exc:
+        raise RuntimeError(f"API connection failed: {exc.reason}")
+
+
+def api_wait_for_job_result(
+    job_id: str,
+    run_id: str = "-",
+    trace_tag: str = "-",
+    quiet: bool = False,
+    timeout: float = 600.0,
+    poll_interval: float = 0.1,
+):
+    deadline = time.monotonic() + timeout
+    while True:
+        status = api_get(f"/jobs/{job_id}", run_id=run_id, trace_tag=trace_tag, quiet=quiet)
+        if status.get("status") in {"completed", "failed"}:
+            payload = api_get(f"/jobs/{job_id}/result", run_id=run_id, trace_tag=trace_tag, quiet=quiet)
+            if status.get("status") == "failed" or payload.get("error"):
+                raise RuntimeError(payload.get("error") or f"Job {job_id} failed")
+            return payload.get("result") or {}
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Job {job_id} did not finish within {timeout} seconds")
+        time.sleep(max(0.01, poll_interval))
+
 ### variety aggregate:
 #  overworld: mean_similarity=0.691 mean_CoD=0.449
 #  underground: mean_similarity=0.644 mean_CoD=0.553
@@ -696,13 +741,16 @@ def main() -> None:
         "queue_key": f"run:{run_id}|agent:{args.agent}",
         "priority": 0,
     }
-    generate_result = api_post(
-        f"/instances/{instance_id}/generate_mapping",
+    generate_job = api_post(
+        f"/instances/{instance_id}/generate_mapping/jobs",
         generate_payload,
         run_id=run_id,
         trace_tag=bootstrap_trace,
         request_id=next_request_id("mapping.generate"),
         quiet=args.quiet,
+    )
+    generate_result = api_wait_for_job_result(
+        generate_job["job_id"], run_id=run_id, trace_tag=bootstrap_trace, quiet=args.quiet,
     )
     domain_root_paths = domain_paths()
     _log(run_id, "domains", "loading domain exemplars", quiet=args.quiet, domains=list(domain_root_paths.keys()))
@@ -765,13 +813,16 @@ def main() -> None:
     refill_threshold = max(1, max(1, args.batch_size) // 2)
 
     def fetch_batch():
-        return api_post(
-            f"/instances/{instance_id}/pool_manager",
+        job = api_post(
+            f"/instances/{instance_id}/pool_manager/jobs",
             agent_request_payload,
             run_id=run_id,
             trace_tag=trace_tag,
             request_id=next_request_id("pool.pull"),
             quiet=args.quiet,
+        )
+        return api_wait_for_job_result(
+            job["job_id"], run_id=run_id, trace_tag=trace_tag, quiet=args.quiet,
         )
 
     def _extract_tilemaps(response):

@@ -93,6 +93,40 @@ class WorldGenerationApiClient:
         except URLError as exc:
             raise RuntimeError(f"API connection failed: {exc.reason}")
 
+    def get(self, path: str) -> dict:
+        url = f"{self.base_url}{path}"
+        request = Request(url, headers={"Content-Type": "application/json"})
+        try:
+            with urlopen(request) as response:
+                return json.load(response)
+        except HTTPError as exc:
+            message = exc.read().decode("utf-8", errors="ignore")
+            raise RuntimeError(f"API request failed: {exc.code} {exc.reason} {message}")
+        except URLError as exc:
+            raise RuntimeError(f"API connection failed: {exc.reason}")
+
+    def wait_for_job_result(
+        self,
+        job_id: str,
+        poll_interval: float = 0.5,
+        timeout: float = 600.0,
+    ) -> dict:
+        deadline = time.monotonic() + max(0.0, float(timeout))
+        while True:
+            status = self.get(f"/jobs/{job_id}")
+            job_status = str(status.get("status", "unknown"))
+            if job_status in {"completed", "failed"}:
+                result_response = self.get(f"/jobs/{job_id}/result")
+                if result_response.get("status") == "failed":
+                    raise RuntimeError(result_response.get("error") or f"Generation job {job_id} failed")
+                result = result_response.get("result")
+                if not isinstance(result, dict):
+                    raise RuntimeError(f"Generation job {job_id} completed without a result")
+                return result
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"Timed out waiting for generation job {job_id}")
+            time.sleep(max(0.0, float(poll_interval)))
+
     def create_instance(
         self,
         function: str = "Performance_KL_Progression",
@@ -102,7 +136,7 @@ class WorldGenerationApiClient:
         instance_id: Optional[str] = None,
     ) -> str:
         if alphas is None:
-            alphas = [0.0, 0.05, 0.1]
+            alphas = [0.0, 0.1]
         if variety_domains is None:
             variety_domains = ["overworld", "underground", "athletic"]
         if grid_points is None:
@@ -124,6 +158,10 @@ class WorldGenerationApiClient:
 
     def generate_mapping(self, instance_id: str, request_payload: dict) -> None:
         payload = {
+            "queue_lane": "human",
+            "workflow": "live_pool",
+            "split": "live",
+            "run_id": request_payload.get("run_id"),
             "example_code": request_payload.get("example_code", ['1-1','1-2','1-3','2-1','3-1','3-3','4-1','4-2','5-1','5-3','6-1','6-2','6-3','7-1','8-1']),
             "Level_Len": request_payload.get("Level_Len",60),
             "module": request_payload.get("module", request_payload.get("Level_Len", 40)),
@@ -135,7 +173,11 @@ class WorldGenerationApiClient:
             "grammar_bulk_repeats": request_payload.get("grammar_bulk_repeats", 1),
             "grammar_max_attempts": request_payload.get("grammar_max_attempts", 256),
         }
-        self.post(f"/instances/{instance_id}/generate_mapping", payload)
+        job = self.post(f"/instances/{instance_id}/generate_mapping/jobs", payload)
+        job_id = job.get("job_id")
+        if not job_id:
+            raise RuntimeError("API did not return a job_id for generate_mapping")
+        self.wait_for_job_result(str(job_id))
 
     def fetch_levels(
         self,
@@ -162,15 +204,19 @@ class WorldGenerationApiClient:
             "request": request_payload,
             "batch_size": max(1, int(batch_size or 1)),
             "priority": priority,
+            "queue_lane": "human",
+            "workflow": "live_pool",
+            "split": "live",
             "refill_threshold": max(1, int(refill_threshold or 1)),
         }
         if difficulty is not None:
             payload["difficulty"] = str(difficulty)
 
-        response = self.post(
-            f"/instances/{instance_id}/pool_manager",
-            payload,
-        )
+        job = self.post(f"/instances/{instance_id}/pool_manager/jobs", payload)
+        job_id = job.get("job_id")
+        if not job_id:
+            raise RuntimeError("API did not return a job_id for pool_manager")
+        response = self.wait_for_job_result(str(job_id))
         tilemaps = response.get("tilemaps") or []
         if not tilemaps and response.get("tilemap") is not None:
             tilemaps = [response["tilemap"]]
@@ -400,14 +446,13 @@ def _build_alpha_streams(
 ) -> List[InfiniteLane]:
     """Create one Map-Elites instance+stream per alpha for directional difficulty routing."""
     streams: List[InfiniteLane] = []
-    for alpha in alpha_schedule:
+    for idx, alpha in enumerate(alpha_schedule):
         stream_request_payload = _build_stream_request_payload(
             base_request_payload,
             alpha=alpha,
             alpha_window_size=alpha_window_size,
         )
         instance_id = api_client.create_instance(alphas=_alpha_window(alpha, alpha_window_size))
-        api_client.generate_mapping(instance_id, stream_request_payload)
         stream = LevelStreamBuffer(
             api_client=api_client,
             instance_id=instance_id,
@@ -416,8 +461,9 @@ def _build_alpha_streams(
             prefetch_levels=prefetch_levels,
             difficulty=f"alpha:{alpha}",
         )
-        # eager bulk prefetch to avoid gameplay stalls when transporting
-        stream.refill(min_size=prefetch_levels)
+        # Initialize only the starting lane; other alpha lanes generate on first use.
+        if idx == 0:
+            stream.refill(min_size=prefetch_levels)
         streams.append(
             InfiniteLane(
                 alpha=float(alpha),
@@ -1415,6 +1461,7 @@ def run(
                 "grammar_bulk_repeats": 1,
                 "grammar_max_attempts": 256,
             }
+        pool_request_payload.setdefault("run_id", run_id)
         api_client = WorldGenerationApiClient(api_base_url)
 
         print("Waiting for world generation API...")
@@ -1457,15 +1504,6 @@ def run(
                 rare_pipe_state=rare_pipe_state,
                 rare_pipe_guarantee_window=rare_pipe_guarantee_window,
             )
-            _prime_preview_lanes(
-                alpha_streams=alpha_streams,
-                current_idx=current_alpha_idx,
-                rare_pipe_replace_rate=rare_pipe_replace_rate,
-                rare_pipe_blue_share=rare_pipe_blue_share,
-                rare_pipe_rng=rare_pipe_rng,
-                rare_pipe_state=rare_pipe_state,
-                rare_pipe_guarantee_window=rare_pipe_guarantee_window,
-            )
             current_map = alpha_streams[current_alpha_idx].game_state.tilemap_source.clone()
             print(
                 f"✓ Alpha streams ready ({len(alpha_streams)} streams), "
@@ -1487,6 +1525,12 @@ def run(
 
     try:
         obs, _ = env.reset()
+        if infinite_mode and alpha_streams:
+            _schedule_alpha_refills(
+                alpha_streams=alpha_streams,
+                current_idx=current_alpha_idx,
+                prefetch_levels=prefetch_levels,
+            )
         try:
             env.set_hud_extra_line(
                 _worldgen_hud_line(
@@ -1767,6 +1811,7 @@ def run_survival_time_trial(
                 "grammar_bulk_repeats": 1,
                 "grammar_max_attempts": 256,
             }
+            pool_request_payload.setdefault("run_id", run_id)
         api_client = WorldGenerationApiClient(api_base_url)
         print("Waiting for world generation API...")
         try:
@@ -1887,6 +1932,12 @@ def run_survival_time_trial(
     try:
         obs, _ = env.reset()
         tracker.new_episode()
+        if infinite_mode and alpha_streams:
+            _schedule_alpha_refills(
+                alpha_streams=alpha_streams,
+                current_idx=current_alpha_idx,
+                prefetch_levels=prefetch_levels,
+            )
 
         initial_alpha = 0.0
         if alpha_streams:
@@ -2465,7 +2516,7 @@ def main() -> None:
     )
     parser.add_argument(
         "--alphas",
-        default="0.0, 0.05, 0.1",
+        default="0.0, 0.1",
         help="Comma-separated alpha schedule (used only when --alpha-full-interval is disabled)",
     )
     parser.add_argument(
@@ -2486,7 +2537,7 @@ def main() -> None:
         default=0.2,
         help="Dynamic alpha window length used for each instance around schedule alpha (default: %(default)s)",
     )
-    parser.add_argument("--level-len", type=int, default=80,
+    parser.add_argument("--level-len", type=int, default=40,
                         help="Level length for pool manager requests (default: %(default)s)")
     parser.add_argument("--batch-size", type=int, default=1,
                         help="Batch size for pool manager requests (default: %(default)s)")
@@ -2517,7 +2568,7 @@ def main() -> None:
     parser.add_argument(
         "--grammar-max-attempts",
         type=int,
-        default=256,
+        default=64,
         help="Max constrained generation retries per candidate sample (default: %(default)s)",
     )
     parser.add_argument("--prefetch-levels", type=int, default=3,

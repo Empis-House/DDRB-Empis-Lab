@@ -33,6 +33,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 _DATA_ROOT = Path(os.getenv("DDRB_DATA_ROOT", str(_REPO_ROOT))).resolve()
 _HISTORY_DIR = _DATA_ROOT / "history"
 _HISTORY_PATH = _HISTORY_DIR / "agent_performance_history.json"
+_MAX_AGENT_HISTORY_EPISODES = 2048
 _MODEL_PATH = _DATA_ROOT / "checkpoints" / "performance_transformer.pt"
 _DOMAIN_ROOT = Path(__file__).resolve().parent.parent / "Super_Mario_Brothers_Maps" / "Domains"
 _DOMAIN_MANIFEST_NAME = "domains_manifest.json"
@@ -198,6 +199,43 @@ def _progression_index_from_divergences(divergences: List[float]) -> float:
     return float(sum(weight * position for weight, position in zip(weights, positions)) / weight_sum)
 
 
+def _crossed_divergence_from_counts(reference_counts, candidate_counts, smoothing: float) -> float:
+    if smoothing < 0:
+        raise ValueError("smoothing must be >= 0")
+
+    patterns = tuple(set(reference_counts) | set(candidate_counts))
+    if not patterns:
+        raise ValueError("No patterns available to compare")
+
+    reference_total = float(sum(reference_counts.values()))
+    candidate_total = float(sum(candidate_counts.values()))
+    vocabulary_size = float(len(patterns))
+    reference_denominator = reference_total + smoothing * vocabulary_size
+    candidate_denominator = candidate_total + smoothing * vocabulary_size
+
+    reference_probabilities = (
+        np.fromiter((reference_counts.get(pattern, 0) for pattern in patterns), dtype=np.float64)
+        + smoothing
+    ) / reference_denominator
+    candidate_probabilities = (
+        np.fromiter((candidate_counts.get(pattern, 0) for pattern in patterns), dtype=np.float64)
+        + smoothing
+    ) / candidate_denominator
+    midpoint = (reference_probabilities + candidate_probabilities) * 0.5
+
+    reference_mask = reference_probabilities > 0
+    candidate_mask = candidate_probabilities > 0
+    reference_kl = np.sum(
+        reference_probabilities[reference_mask]
+        * np.log(reference_probabilities[reference_mask] / midpoint[reference_mask])
+    )
+    candidate_kl = np.sum(
+        candidate_probabilities[candidate_mask]
+        * np.log(candidate_probabilities[candidate_mask] / midpoint[candidate_mask])
+    )
+    return float(0.3 * reference_kl + 0.7 * candidate_kl)
+
+
 def Performance_KL_Progression(
     level,
     df,
@@ -219,9 +257,9 @@ def Performance_KL_Progression(
         return 0.0
 
     try:
-        from .tile_pattern_kl import _probability_vectors, crossed_divergence, tile_pattern_distribution
+        from .tile_pattern_kl import tile_pattern_distribution
     except ImportError:  # pragma: no cover - supports direct script imports
-        from tile_pattern_kl import _probability_vectors, crossed_divergence, tile_pattern_distribution
+        from tile_pattern_kl import tile_pattern_distribution
 
     candidate_counts = tile_pattern_distribution([grid], window=window, stride=stride)
     ordered_references = _ordered_domain_references(domain_root=Path(domain_root))
@@ -229,8 +267,7 @@ def Performance_KL_Progression(
     divergences: List[float] = []
     for _, reference_path in ordered_references:
         reference_counts = _reference_pattern_counts(reference_path, window=window, stride=stride)
-        p_probs, q_probs = _probability_vectors(reference_counts, candidate_counts, smoothing=smoothing)
-        divergences.append(float(crossed_divergence(p_probs, q_probs)))
+        divergences.append(_crossed_divergence_from_counts(reference_counts, candidate_counts, smoothing))
 
     score = _progression_index_from_divergences(divergences)
     return _clip01(score) if clip else float(score)
@@ -418,6 +455,9 @@ def _load_state() -> None:
         try:
             payload = json.loads(_HISTORY_PATH.read_text(encoding="utf-8"))
             _AGENT_HISTORY = payload.get("history", {})
+            for agent_id, episodes in _AGENT_HISTORY.items():
+                if isinstance(episodes, list) and len(episodes) > _MAX_AGENT_HISTORY_EPISODES:
+                    _AGENT_HISTORY[agent_id] = episodes[-_MAX_AGENT_HISTORY_EPISODES:]
             _AGENT_TO_INDEX = {k: int(v) for k, v in payload.get("agent_index", {}).items()}
         except Exception:
             _AGENT_HISTORY = {}
@@ -454,22 +494,23 @@ def update_agent_history(agent_id: str, history: Iterable[Dict[str, Any]], appen
     _ensure_agent_index(agent_id)
     incoming = [h for h in history if isinstance(h, dict)]
     if append:
-        _AGENT_HISTORY.setdefault(agent_id, []).extend(incoming)
+        episodes = _AGENT_HISTORY.setdefault(agent_id, [])
+        episodes.extend(incoming)
+        del episodes[:-_MAX_AGENT_HISTORY_EPISODES]
     else:
-        _AGENT_HISTORY[agent_id] = incoming
+        _AGENT_HISTORY[agent_id] = incoming[-_MAX_AGENT_HISTORY_EPISODES:]
 
     _save_state()
 
 
-def train_performance_predictor(epochs: Optional[int] = None, history_window: Optional[int] = None) -> Dict[str, Any]:
-    """Train or refresh the transformer model from all recorded agent histories."""
+def _train_performance_predictor_dataset(
+    x: np.ndarray,
+    mask: np.ndarray,
+    agent_ids: np.ndarray,
+    y: np.ndarray,
+    epochs: int,
+) -> Dict[str, Any]:
     global _MODEL_READY, _LAST_TRAIN_SAMPLE_COUNT
-    if history_window is None:
-        history_window = _CONFIG.history_window
-    if epochs is None:
-        epochs = _CONFIG.train_epochs
-
-    x, mask, agent_ids, y = _build_dataset(history_window=history_window)
     sample_count = int(len(y))
     if sample_count < _CONFIG.min_samples:
         _MODEL_READY = False
@@ -509,6 +550,17 @@ def train_performance_predictor(epochs: Optional[int] = None, history_window: Op
     _LAST_TRAIN_SAMPLE_COUNT = sample_count
     _save_state()
     return {"trained": True, "samples": sample_count, "final_loss": losses[-1] if losses else None}
+
+
+def train_performance_predictor(epochs: Optional[int] = None, history_window: Optional[int] = None) -> Dict[str, Any]:
+    """Train or refresh the transformer model from all recorded agent histories."""
+    if history_window is None:
+        history_window = _CONFIG.history_window
+    if epochs is None:
+        epochs = _CONFIG.train_epochs
+
+    dataset = _build_dataset(history_window=history_window)
+    return _train_performance_predictor_dataset(*dataset, epochs=int(epochs))
 
 
 def _predict_agent_capability(agent_id: str, history_window: int) -> Optional[float]:
@@ -575,11 +627,12 @@ def Performance(
         return structural if clip else _legacy_structural_score(level, df=df, non_landing_weight=non_landing_weight, clip=False)
 
     if auto_train:
-        x, _, _, y = _build_dataset(history_window=history_window)
+        dataset = _build_dataset(history_window=history_window)
+        x, mask, agent_ids, y = dataset
         sample_count = int(len(y))
         # Train only if model is missing/stale and enough samples exist.
         if sample_count >= _CONFIG.min_samples and (not _MODEL_READY or sample_count - _LAST_TRAIN_SAMPLE_COUNT >= 16):
-            train_performance_predictor(history_window=history_window)
+            _train_performance_predictor_dataset(x, mask, agent_ids, y, epochs=_CONFIG.train_epochs)
 
     capability = _predict_agent_capability(agent_id=agent_id, history_window=history_window)
     if capability is None:
@@ -633,24 +686,6 @@ def performance_kl_progression(
 
 Levels_Performance = pd.DataFrame(columns=["Level_String", "Added_Wordlist", "Performance"])
 
-
-def Add_Level_To_Performance(level, df, WordsList=None, Levels_Performance=Levels_Performance):
-    """Generate a sample level from a grammar and append its performance."""
-    if WordsList is None:
-        WordsList = []
-
-    try:
-        from .Grammar_Notation import Grammar
-    except ImportError:  # pragma: no cover
-        from Grammar_Notation import Grammar
-
-    knowledge = df.to_numpy().T[3:]
-    grammar = Grammar(level, knowledge=knowledge, WordsList=WordsList)
-    generated = grammar.N_Level_Generator(100)._Sequence
-
-    new_row = [level, WordsList, performance(generated, df=df)]
-    Levels_Performance.loc[len(Levels_Performance)] = new_row
-    return Levels_Performance
 
 
     

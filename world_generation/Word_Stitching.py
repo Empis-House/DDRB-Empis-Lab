@@ -39,7 +39,10 @@ CLI examples:
 
 """
 
-from numba import njit
+try:
+    from numba import njit
+except ImportError:  # Numba is optional in the minimal Docker environment.
+    njit = None
 import numpy as np
 
 Max_Height = 4 # maximum vertical rise a Mario jump can cover
@@ -49,14 +52,14 @@ Band_Height = 14 #size of level
 
 #check if there is a 1 in position k of the number n
 # 4 = 00100000000000 so p(n=4,k=2) = 1 and p(n=4,k!=2) = 0
-#@njit(target_backend='cuda') 
+@njit(target_backend='cuda') 
 def Punctual_Binary_Prop(n,k):
     n_ = n>>k 
     #returns only position
     return (n_ % 2**(k+1))%2
 
 # slice bit array sections
-#@njit(target_backend='cuda')
+@njit(target_backend='cuda')
 def Range_Binary_Prop(n,a,b):
     #read structures
     a = max(0,a)
@@ -65,7 +68,67 @@ def Range_Binary_Prop(n,a,b):
     #returns middle number
     return n_
 
-def Jumping_Fiasible_Word(Level, knowledge, Game_mod = 0, debug = False, max_height = None, max_length = None):
+def _jumping_feasible_kernel(landings, colliders, max_height, max_length, original_length):
+    n = len(landings)
+    if n == 0 or landings[0] == 0 or colliders[n - 1] == 0:
+        return False
+    if original_length == 1:
+        return True
+
+    for column in range(n):
+        current_landing = landings[column]
+        if current_landing == 0:
+            continue
+
+        column_reachable = column == 0
+        for height in range(Band_Height):
+            if ((current_landing >> height) & 1) == 0:
+                continue
+
+            top_block = Band_Height
+            for above in range(height + 1, Band_Height):
+                if ((current_landing >> above) & 1) or ((colliders[column] >> above) & 1):
+                    top_block = above
+                    break
+
+            min_height = max(0, height - max_height)
+            left_accessible = column == 0
+            for previous in range(max(0, column - max_length), column):
+                landing = landings[previous]
+                for landing_height in range(min_height, top_block):
+                    if (landing >> landing_height) & 1:
+                        left_accessible = True
+                        break
+                if left_accessible:
+                    break
+
+            jump_window_exists = False
+            max_landing_height = min(Band_Height - 1, height + max_height)
+            for neighbor in range(max(0, column - max_length), min(n, column + max_length + 1)):
+                if neighbor == column:
+                    continue
+                landing = landings[neighbor]
+                for landing_height in range(max_landing_height + 1):
+                    if (landing >> landing_height) & 1:
+                        jump_window_exists = True
+                        break
+                if jump_window_exists:
+                    break
+
+            if left_accessible and jump_window_exists:
+                column_reachable = True
+                break
+
+        if not column_reachable:
+            return False
+    return True
+
+
+if njit is not None:
+    _jumping_feasible_kernel = njit(cache=True)(_jumping_feasible_kernel)
+
+
+def _jumping_feasible_python(Level, knowledge, Game_mod=0, debug=False, max_height=None, max_length=None):
     """
     Taken from https://arxiv.org/pdf/2002.02992.pdf
     This function verify if a single word is possible to wander with walking and jumping, 
@@ -253,7 +316,36 @@ def Jumping_Fiasible_Word(Level, knowledge, Game_mod = 0, debug = False, max_hei
             "max_length": int(max_length),
             "max_height": int(max_height),
         }
-    return  All_Landings_Accesibility_Stitched
+    return All_Landings_Accesibility_Stitched
+
+
+def Jumping_Fiasible_Word(Level, knowledge, Game_mod=0, debug=False, max_height=None, max_length=None):
+    if debug or Game_mod == 7357:
+        return _jumping_feasible_python(
+            Level, knowledge, Game_mod=Game_mod, debug=debug,
+            max_height=max_height, max_length=max_length,
+        )
+
+    if max_height is None:
+        max_height = Max_Height
+    if max_length is None:
+        max_length = Max_Length
+
+    landings = knowledge[0]
+    colliders = knowledge[1]
+    landing_masks = [int(landings[token]) for token in Level]
+    collider_masks = [int(colliders[token]) for token in Level]
+    while landing_masks and landing_masks[-1] == 0 and collider_masks[-1] == 0:
+        landing_masks.pop()
+        collider_masks.pop()
+
+    return bool(_jumping_feasible_kernel(
+        np.asarray(landing_masks, dtype=np.int64),
+        np.asarray(collider_masks, dtype=np.int64),
+        int(max_height),
+        int(max_length),
+        len(Level),
+    ))
 
 
 def _load_level_tokens_from_code(level_code):
