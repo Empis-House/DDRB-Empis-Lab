@@ -1,4 +1,4 @@
-# Level Up: Dinamic Difficulty-Reward Balancing 
+# Level Up: Dynamic Difficulty-Reward Balancing
 A research about learning optimization on the AI Super Mario Bros. Framework.
 
 ## Abstract
@@ -9,7 +9,7 @@ This project reconceptualizes DDA as an abstract learning problem grounded in fl
 
 As an initial experiment, we use the Super Mario Bros framework (a widely studied computational benchmark) reframing it not as an engaging game but as a learning task with an optimal learning curve. Rather than training from human gameplay, which would be prohibitively ambitious, we leverage the extensive literature on SMB agents to train and test our model. Our core hypothesis is that DDRB improves agent robustness and convergence compared to existing methods. We additionally hypothesize that agent behaviour provides sufficient diversity to correlate with human learning experience.
 
-Look at WorkPaper.md 
+See [WorkingPaper.md](./WorkingPaper.md) for the research paper.
 
 # DDRB Lab
 
@@ -79,6 +79,11 @@ Core endpoints:
 - `POST /performance/history`: append agent history for the performance model
 - `POST /performance/train`: train the performance predictor
 - `POST /performance/predict`: score a level with the performance model
+- `POST /instances/{instance_id}/generate_mapping/jobs`: start an asynchronous generation job
+- `POST /instances/{instance_id}/pool_manager/jobs`: start an asynchronous pool request
+- `GET /jobs/{job_id}`: inspect job status
+- `GET /jobs/{job_id}/result`: retrieve a completed job result
+- `GET /instances/{instance_id}/dead_letters`: inspect failed queued work
 
 ### 2. Run the integrated generation plus agent pipeline
 
@@ -119,6 +124,85 @@ Useful options:
 - `--checkpoint-path`: resume a trainable agent from disk
 - `--report-file`: save the final report as JSON
 - `--skip-self-tests`: skip agent-load and checkpoint persistence checks
+- `--mode`: choose `training`, `testing`, `validation`, or `inference`
+- `--case-id`: group related runs for experiment comparisons
+- `--quiet`: reduce custom logging output
+- `--no-color`: disable ANSI colors in logs
+
+### 2a. Compare procedural and classic-level training
+
+The procedural `main.py` workflow uses a shared benchmark protocol for its
+custom-simulator training runs. To train a comparison model on classic SMB
+stages, install the optional backend in a **Python 3.13+** environment:
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-benchmark.txt
+```
+
+The optional `gym-super-mario-bros` backend depends on `nes-py`; its current
+release requires Python 3.13 or newer. The existing Python 3.12 environment
+cannot install that release. Follow the upstream installation and ROM notices;
+the project does not distribute or license Nintendo ROMs.
+
+Train the procedural baseline using the existing API workflow:
+
+```bash
+python main.py --agent torch_dqn --episodes 500 --batch-size 10 --seed 0 \
+  --checkpoint-path checkpoints/benchmark-procedural-v1.pt \
+  --report-file procedural_training.json
+```
+
+Train a fresh model on rotating classic stages:
+
+```bash
+python -m mario_rl_env.benchmark train-classic \
+  --stages 1-1 1-2 2-1 4-2 --episodes 500 --batch-size 10 \
+  --checkpoint checkpoints/benchmark-classic-v1.pt
+```
+
+Evaluate both models on the same held-out classic stages and episode seeds:
+
+```bash
+python -m mario_rl_env.benchmark compare \
+  --model procedural=checkpoints/benchmark-procedural-v1.pt \
+  --training-env procedural=procedural_custom_simulator \
+  --model classic=checkpoints/benchmark-classic-v1.pt \
+  --training-env classic=gym-super-mario-bros \
+  --stages 1-1 1-2 2-1 4-2 --episodes 5 \
+  --report benchmark/classic_comparison.json
+```
+
+The comparison command currently accepts pixel-based `torch_dqn` checkpoints
+with the protocol's eight-action output layer. The evaluation JSON records
+training-environment labels, backend/library versions, seeds, per-stage
+episodes, rewards, win/death rates, and progress. It also aggregates results
+by training environment and includes pairwise mean-reward, progress, and win-rate
+differences. Procedural training reports record hashes of generated levels;
+classic training reports record the stage used for each episode.
+
+Protocol conditions shared by the custom and NES-backed runs:
+
+- The same eight action indices and corresponding controls, in the existing
+  custom environment's order; one environment/emulator frame per action.
+- A 500,000-step episode cap; completion and death are recorded as termination,
+  while the cap is truncation.
+- One reward function on both backends: +1 per newly reached tile of horizontal
+  progress, +2 per coin, -0.01 per step, +100 for a stage win, and -15 for
+  death. Native backend rewards are retained separately in step info.
+- Progress is reported as horizontal tile widths advanced, with the first
+  environment step as the zero point (64 custom pixels or 16 NES pixels per
+  tile), rather than mixing raw pixel scales. Use the same `--seed` value in
+  both training commands for reproducible initialization and episode resets.
+- DQN receives RGB frames and applies its existing grayscale/84x84
+  preprocessing on either backend.
+
+This standardizes the **experiment protocol**, not gameplay mechanics. The
+custom simulator and NES ROM still have different physics, collision behavior,
+enemy behavior, and level geometry. Therefore classic-level scores compare
+transfer/performance under a common interface; they do not prove rule-for-rule
+gameplay equivalence. Generated levels remain available only in the custom
+simulator.
 
 ### 3. Run an agent on an existing map
 

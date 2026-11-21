@@ -297,6 +297,7 @@ def run(
     min_epsilon: float = 0.01,
     registry=None,
     execution_config=None,
+    benchmark_protocol: bool = False,
 ) -> dict:
     """
     Run *n_episodes* of the specified agent and return summary stats.
@@ -312,6 +313,27 @@ def run(
     """
     from env import MarioEnv, N_ACTIONS, ACTION_MAP
     from metrics import MetricsTracker
+
+    if benchmark_protocol:
+        if env is not None:
+            raise ValueError(
+                "benchmark_protocol requires map_path so the custom backend can be identified"
+            )
+        from mario_rl_env.benchmark_protocol import make_custom_env
+
+        make_env = lambda source: make_custom_env(
+            map_path=source,
+            obs_mode=obs_mode,
+            render_mode=render_mode,
+            fps=60 if render else 10000,
+        )
+    else:
+        make_env = lambda source: MarioEnv(
+            map_path=source,
+            obs_mode=obs_mode,
+            render_mode=render_mode,
+            fps=60 if render else 10000,
+        )
 
     def _resolve_action(controls: dict, default: int = -1) -> int:
         for idx, mapped in enumerate(ACTION_MAP):
@@ -343,20 +365,13 @@ def run(
         else:
             env_provider = None
     elif callable(map_path):
-        env_provider = lambda: MarioEnv(
-            map_path=map_path(),
-            obs_mode=obs_mode,
-            render_mode=render_mode,
-            fps=60 if render else 10000,
-        )
+        env_provider = lambda: make_env(map_path())
         env = env_provider()
     else:
-        env = MarioEnv(
-            map_path=map_path,
-            obs_mode=obs_mode,
-            render_mode=render_mode,
-            fps=60 if render else 10000,
-        )
+        env = make_env(map_path)
+
+    if execution_config is not None:
+        execution_config.apply_seed()
 
     # Agent selection
     training_agent = False
@@ -599,6 +614,8 @@ def main() -> None:
                         help="Open Pygame window for all episodes (slows training)")
     parser.add_argument("--render-last", action="store_true",
                         help="Open Pygame window only for the final episode")
+    parser.add_argument("--benchmark-protocol", action="store_true",
+                        help="Use shared action, reward, termination, and progress metrics")
     parser.add_argument("--save-csv",    default="",
                         metavar="FILE",
                         help="Save episode CSV to FILE")
@@ -676,6 +693,7 @@ def main() -> None:
         min_epsilon=args.min_epsilon,
         registry=registry,
         execution_config=execution_config,
+        benchmark_protocol=args.benchmark_protocol,
     )
 
     registry.record_run_complete(

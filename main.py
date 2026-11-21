@@ -16,6 +16,7 @@ import argparse
 from collections import deque
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime
+from importlib.metadata import PackageNotFoundError, version
 from typing import Optional
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -28,6 +29,7 @@ for _stream in (sys.stdout, sys.stderr):
         _stream.reconfigure(encoding="utf-8", errors="replace")
 
 from mario_rl_env.artifact_registry import ArtifactRegistry, DEFAULT_REGISTRY_PATH, ExecutionConfig
+from mario_rl_env.benchmark_protocol import PROTOCOL_METADATA
 from mario_rl_env.run_agent import run as agent_run
 from mario_rl_env.env import N_ACTIONS
 from mario_rl_env.ml_agents import AGENT_MANAGER, RLAgent
@@ -57,6 +59,19 @@ ANSI_GRAY = "\033[38;5;245m"
 
 def _timestamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _runtime_metadata() -> dict:
+    metadata = {
+        "python": sys.version.split()[0],
+        "gymnasium": version("gymnasium"),
+        "numpy": version("numpy"),
+    }
+    try:
+        metadata["torch"] = version("torch")
+    except PackageNotFoundError:
+        pass
+    return metadata
 
 
 def _supports_color() -> bool:
@@ -382,6 +397,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-last", action="store_true", help="Render only last try of each batch")
     parser.add_argument("--checkpoint-path", default="", help="Checkpoint path for trainable agents")
     parser.add_argument("--report-file", default="", help="Optional JSON file to save run report")
+    parser.add_argument("--seed", type=int, default=None, help="Optional run seed for reproducibility")
     parser.add_argument(
         "--mode",
         default="training",
@@ -444,6 +460,7 @@ def _summarize_training_history(history):
             "wins": 0,
             "win_rate": 0.0,
             "mean_max_x": 0.0,
+            "mean_max_progress_tiles": 0.0,
         }
 
     rewards = [_to_float(row.get("total_reward")) for row in history]
@@ -455,10 +472,14 @@ def _summarize_training_history(history):
         return bool(episode_info.get("won", info.get("won", False)))
 
     max_x_values = []
+    max_progress_values = []
     for row in history:
         info = row.get("info", {}) if isinstance(row, dict) else {}
         episode_info = info.get("episode", {}) if isinstance(info, dict) else {}
         max_x_values.append(_to_float(episode_info.get("max_x", info.get("max_x", 0.0))))
+        max_progress_values.append(
+            _to_float(episode_info.get("max_progress_tiles", info.get("progress_max_tiles", 0.0)))
+        )
 
     wins = sum(1 for row in history if _won(row))
     n = len(history)
@@ -471,6 +492,7 @@ def _summarize_training_history(history):
         "wins": wins,
         "win_rate": wins / n if n > 0 else 0.0,
         "mean_max_x": mean(max_x_values) if max_x_values else 0.0,
+        "mean_max_progress_tiles": mean(max_progress_values) if max_progress_values else 0.0,
     }
 
 
@@ -591,7 +613,7 @@ def _print_agent_report(report):
             wins=metrics.get("wins", 0),
             win_rate_pct=round(100.0 * metrics.get("win_rate", 0.0), 2),
             mean_steps=round(metrics.get("mean_steps", 0.0), 1),
-            mean_max_x=round(metrics.get("mean_max_x", 0.0), 1),
+            mean_max_progress_tiles=round(metrics.get("mean_max_progress_tiles", 0.0), 2),
         )
     else:
         _log(run_id, "report", "evaluation metrics", quiet=False, metrics=metrics)
@@ -671,6 +693,7 @@ def main() -> None:
         render_last=args.render_last,
         checkpoint_path=args.checkpoint_path or "<none>",
         report_file=args.report_file or "<none>",
+        seed=args.seed,
         skip_self_tests=args.skip_self_tests,
     )
     _log_general_variables(run_id, phase="start", quiet=args.quiet)
@@ -779,11 +802,16 @@ def main() -> None:
             "agent_name": args.agent,
             "case_id": args.case_id,
             "run_id": run_id,
-            "seed": None,
+            "seed": args.seed,
             "deterministic": False,
+            "extra": {
+                "training_environment": "procedural_custom_simulator",
+                "benchmark_protocol": PROTOCOL_METADATA,
+            },
         },
     )
     execution_config.apply_seed()
+    runtime_metadata = _runtime_metadata()
     registry = ArtifactRegistry(DEFAULT_REGISTRY_PATH)
     registry.record_run_start(
         agent_name=args.agent,
@@ -797,6 +825,9 @@ def main() -> None:
             "checkpoint_path": args.checkpoint_path or None,
             "persistence_mode": persistence_mode,
             "seed_used": execution_config.seed_used,
+            "training_environment": "procedural_custom_simulator",
+            "benchmark_protocol": PROTOCOL_METADATA,
+            "runtime": runtime_metadata,
         },
     )
 
@@ -892,6 +923,7 @@ def main() -> None:
         checkpoint_path=args.checkpoint_path,
         registry=registry,
         execution_config=execution_config,
+        benchmark_protocol=True,
     )
     prefetch_executor.shutdown(wait=False, cancel_futures=True)
     _log(
@@ -903,6 +935,13 @@ def main() -> None:
         levels_requested=level_counter,
     )
 
+    training_history = result.get("history", []) if isinstance(result, dict) else []
+    training_level_ids = set()
+    for row in training_history:
+        info = row.get("info", {}) if isinstance(row, dict) else {}
+        episode_info = info.get("episode", {}) if isinstance(info, dict) else {}
+        if isinstance(episode_info, dict) and episode_info.get("level_id"):
+            training_level_ids.add(episode_info["level_id"])
     context = {
         "run_id": run_id,
         "trace_tag": trace_tag,
@@ -917,6 +956,11 @@ def main() -> None:
         "generate_status": generate_result.get("status") if isinstance(generate_result, dict) else None,
         "level_variety_summaries": level_variety_summaries,
         "case_id": args.case_id,
+        "training_environment": "procedural_custom_simulator",
+        "benchmark_protocol": PROTOCOL_METADATA,
+        "seed_used": execution_config.seed_used,
+        "training_level_ids": sorted(training_level_ids),
+        "runtime": runtime_metadata,
     }
     report = _format_agent_report(context=context, result=result)
     _print_agent_report(report)
