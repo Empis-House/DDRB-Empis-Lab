@@ -19,7 +19,7 @@ try:
         REWARD_PER_TILE_RIGHT, REWARD_PER_TILE_LEFT,
         REWARD_KILL_ENEMY, REWARD_COIN, REWARD_DEATH,
         REWARD_WIN, REWARD_TIME_STEP,
-        MAX_STEPS_PER_EPISODE,
+        MAX_STEPS_PER_EPISODE, HORIZONTAL_STUCK_STEPS,
     )
     from .tilemap import TileMap, parse_tilemap
     from .entities import Mario, Goomba, MarioState, GoombaState
@@ -32,7 +32,7 @@ except ImportError:
         REWARD_PER_TILE_RIGHT, REWARD_PER_TILE_LEFT,
         REWARD_KILL_ENEMY, REWARD_COIN, REWARD_DEATH,
         REWARD_WIN, REWARD_TIME_STEP,
-        MAX_STEPS_PER_EPISODE,
+        MAX_STEPS_PER_EPISODE, HORIZONTAL_STUCK_STEPS,
     )
     from tilemap import TileMap, parse_tilemap
     from entities import Mario, Goomba, MarioState, GoombaState
@@ -70,6 +70,7 @@ class GameState:
     # Track furthest x for progress reward
     _max_x: float = field(init=False, default=0.0)
     _prev_x: float = field(init=False, default=0.0)
+    _horizontal_stuck_steps: int = field(init=False, default=0)
 
     def __post_init__(self) -> None:
         self.reset()
@@ -88,6 +89,7 @@ class GameState:
         self.mario.coyote_time = 0
         self._max_x = self.mario.x
         self._prev_x = self.mario.x
+        self._horizontal_stuck_steps = 0
 
     def step(self, actions: dict) -> StepResult:
         """
@@ -181,14 +183,30 @@ class GameState:
 
         # ── Progress reward ───────────────────────────────────────────────
         dx = self.mario.x - self._prev_x
+        horizontal_progressed = False
         if dx > 0:
             progress = (self.mario.x - self._max_x)
             if progress > 0:
                 reward += progress / TILE_SIZE * REWARD_PER_TILE_RIGHT
                 self._max_x = self.mario.x
+                horizontal_progressed = True
         elif dx < 0:
             reward += abs(dx) / TILE_SIZE * REWARD_PER_TILE_LEFT
         self._prev_x = self.mario.x
+
+        # Stop episodes that stop making rightward progress.  Reset the
+        # counter whenever Mario reaches a new furthest horizontal position.
+        if horizontal_progressed:
+            self._horizontal_stuck_steps = 0
+            self._max_x = self.mario.x
+        else:
+            self._horizontal_stuck_steps += 1
+        horizontal_stuck = (
+            self._horizontal_stuck_steps >= HORIZONTAL_STUCK_STEPS
+            and not self.done
+        )
+        if horizontal_stuck:
+            info['stuck_horizontally'] = True
 
         # ── Win condition ─────────────────────────────────────────────────
         if self.mario.x >= (self.tilemap.width - 4) * TILE_SIZE:
@@ -203,7 +221,10 @@ class GameState:
 
         # ── Truncation ────────────────────────────────────────────────────
         self.step_count += 1
-        truncated = self.step_count >= MAX_STEPS_PER_EPISODE and not self.done
+        truncated = (
+            horizontal_stuck
+            or (self.step_count >= MAX_STEPS_PER_EPISODE and not self.done)
+        )
 
         self.total_reward += reward
 
@@ -231,6 +252,13 @@ class GameState:
                 'kills':        self.mario.kills,
                 'max_x':        self._max_x,
                 'won':          info.get('won', False),
+                'stuck_horizontally': info.get('stuck_horizontally', False),
+                'termination_reason': (
+                    'win' if info.get('won')
+                    else 'death' if info.get('died')
+                    else 'horizontal_stuck' if info.get('stuck_horizontally')
+                    else 'truncated'
+                ),
             }
 
         return StepResult(
@@ -248,7 +276,10 @@ class GameState:
         open (air above ground) and clear of enemy spawns by ≥3 tiles.
         """
         tm = self.tilemap_source
-        from constants import MARIO_W, MARIO_H
+        try:
+            from .constants import MARIO_W, MARIO_H
+        except ImportError:
+            from constants import MARIO_W, MARIO_H
 
         enemy_cols = {c for c, r in tm.enemy_spawns}
         clearance = 3
@@ -277,7 +308,10 @@ class GameState:
     def _spawn_goombas(self) -> List[Goomba]:
         """Instantiate one Goomba per enemy spawn in the tilemap."""
         goombas: List[Goomba] = []
-        from constants import GOOMBA_W, GOOMBA_H
+        try:
+            from .constants import GOOMBA_W, GOOMBA_H
+        except ImportError:
+            from constants import GOOMBA_W, GOOMBA_H
         # avoid spawning enemies right next to Mario's spawn column
         clearance_cols = 3
         try:
