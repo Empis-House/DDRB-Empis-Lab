@@ -31,6 +31,7 @@ import random
 import time
 import uuid
 from collections import deque
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -1408,6 +1409,8 @@ def run(
     rare_pipe_blue_share: float = 0.05,
     rare_pipe_seed: Optional[int] = None,
     rare_pipe_guarantee_window: int = 6,
+    schema_store_path: Optional[str] = None,
+    save_trajectories: bool = False,
 ) -> None:
     try:
         import pygame
@@ -1421,6 +1424,10 @@ def run(
 
     resolved_agent_name = str(agent_name or agent_hash or "human_player").strip() or "human_player"
     run_id = f"human-{time.strftime('%Y%m%d-%H%M%S')}-{os.getpid()}"
+    if save_trajectories and not schema_store_path:
+        schema_store_path = "checkpoints/experiments.sqlite3"
+    experiment_store = None
+    schema_snapshot = None
     registry = _get_registry()
     registry.record_run_start(
         agent_name=resolved_agent_name,
@@ -1522,8 +1529,41 @@ def run(
     if infinite_mode and alpha_streams:
         _load_lane_into_env(env, alpha_streams[current_alpha_idx])
     tracker = MetricsTracker(keep_steps=True)
+    trajectory_writer = None
+    last_step_info: Dict[str, Any] = {}
 
     try:
+        if schema_store_path:
+            from mario_rl_env.schema import (
+                ActionSpace, ExperimentRun, ObservationContract, RLPlayerSnapshot,
+                SQLiteExperimentStore, TrainingProvenance, TrainingState,
+            )
+
+            experiment_store = SQLiteExperimentStore(schema_store_path)
+            experiment_store.upsert_run(ExperimentRun(
+                run_id=run_id,
+                case_id=case_id,
+                evaluation_stage="stage_2_cross_origin" if infinite_mode else "exploratory",
+                training_env_backend="procedural_custom_simulator",
+                python_version=sys.version.split()[0],
+                library_versions={},
+            ))
+            schema_snapshot = RLPlayerSnapshot(
+                player_snapshot_id=str(uuid.uuid4()),
+                agent_id=f"{resolved_agent_name}:{case_id or 'default'}",
+                agent_name=resolved_agent_name,
+                agent_family="human",
+                is_trainable=False,
+                framework_backend="human",
+                observation_contract=ObservationContract(obs_mode="rgb"),
+                action_space=ActionSpace(),
+                training_state=TrainingState(),
+                training_provenance=TrainingProvenance(
+                    source_environment="procedural_custom_simulator",
+                    is_frozen=True,
+                ),
+            )
+            experiment_store.upsert_snapshot(schema_snapshot)
         obs, _ = env.reset()
         if infinite_mode and alpha_streams:
             _schedule_alpha_refills(
@@ -1549,9 +1589,91 @@ def run(
         tracker.new_episode()
         episode = 0
         total_steps = 0
+        schema_episode_count = 0
+        schema_episode_start_step = 0
+        trajectory_writer = None
+        performance_id = ""
+        trajectory_uri = None
+        last_step_info: Dict[str, Any] = {}
         levels_completed = 0
         tiles_appended = 0
         pipe_cooldown = 0
+
+        def _start_trajectory() -> None:
+            nonlocal trajectory_writer, performance_id, trajectory_uri, schema_episode_start_step
+            performance_id = str(uuid.uuid4())
+            trajectory_uri = None
+            schema_episode_start_step = total_steps
+            if save_trajectories:
+                from mario_rl_env.schema import GzipTrajectoryWriter
+
+                trajectory_uri = str(
+                    Path("checkpoints/trajectories") / f"{performance_id}.jsonl.gz"
+                )
+                trajectory_writer = GzipTrajectoryWriter(trajectory_uri)
+
+        def _finish_schema_episode(
+            episode_record: Any, step_info: Dict[str, Any], *,
+            terminated: bool, truncated: bool, manual_abort: bool = False,
+        ) -> None:
+            nonlocal trajectory_writer, schema_episode_count
+            if trajectory_writer is not None:
+                trajectory_writer.close()
+                trajectory_writer = None
+            if experiment_store is None or schema_snapshot is None:
+                return
+            from mario_rl_env.schema.integration import record_episode
+
+            progress_tiles = float(episode_record.max_x) / max(1, TILE_SIZE)
+            normalized_info = dict(step_info)
+            normalized_info.update({
+                "total_reward": float(episode_record.total_reward),
+                "steps": int(episode_record.steps),
+                "coins": int(episode_record.coins),
+                "progress_tiles": progress_tiles,
+                "progress_max_tiles": progress_tiles,
+                "won": bool(episode_record.won),
+                "died": bool(terminated and not episode_record.won),
+            })
+            record_episode(
+                experiment_store,
+                run_id=run_id,
+                agent_name=resolved_agent_name,
+                evaluation_stage="stage_2_cross_origin" if infinite_mode else "exploratory",
+                mode="inference",
+                split_role="test",
+                snapshot=schema_snapshot,
+                env=env,
+                info=normalized_info,
+                episode_index=schema_episode_count,
+                total_env_steps_start=schema_episode_start_step,
+                total_env_steps_end=total_steps,
+                episodes_completed_end=schema_episode_count + 1,
+                episode_seconds=float(episode_record.duration_sec),
+                total_reward=float(episode_record.total_reward),
+                steps=int(episode_record.steps),
+                terminated=terminated,
+                truncated=truncated,
+                performance_id=performance_id,
+                trajectory_sidecar_uri=trajectory_uri,
+                termination_reason="manual_abort" if manual_abort else None,
+            )
+            schema_episode_count += 1
+
+        def _write_trajectory_step(action: int, reward: float, step_info: Dict[str, Any]) -> None:
+            if trajectory_writer is not None:
+                trajectory_writer.write({
+                    "step": total_steps,
+                    "action": int(action),
+                    "reward": float(reward),
+                    "mario_x": step_info.get("mario_x"),
+                    "mario_y": step_info.get("mario_y"),
+                    "coins": step_info.get("coins"),
+                    "score": step_info.get("score"),
+                    "on_ground": step_info.get("on_ground"),
+                })
+
+        _start_trajectory()
 
         print("=" * 50)
         mode_info = " (Infinite Runner)" if infinite_mode else ""
@@ -1569,9 +1691,24 @@ def run(
                     if event.key in (pygame.K_q, pygame.K_ESCAPE):
                         running = False
                     elif event.key == pygame.K_r:
+                        current_episode = getattr(tracker, "_current", None)
+                        if (
+                            experiment_store is not None
+                            and current_episode is not None
+                            and current_episode.steps
+                        ):
+                            aborted = tracker.end_episode({"episode": {}})
+                            _finish_schema_episode(
+                                aborted, last_step_info, terminated=False,
+                                truncated=False, manual_abort=True,
+                            )
+                        elif trajectory_writer is not None:
+                            trajectory_writer.close()
+                            trajectory_writer = None
                         obs, _ = env.reset()
                         tracker.new_episode()
                         episode += 1
+                        _start_trajectory()
                         print(f"\n[Episode {episode}] Restarted")
 
             keys = pygame.key.get_pressed()
@@ -1588,6 +1725,8 @@ def run(
             obs, reward, done, trunc, info = env.step_with_actions(actions)
             tracker.record(action_idx, reward, info)
             total_steps += 1
+            last_step_info = info
+            _write_trajectory_step(action_idx, reward, info)
 
             try:
                 env.set_hud_extra_line(
@@ -1666,6 +1805,9 @@ def run(
 
             if done or trunc:
                 ep_rec = tracker.end_episode(info)
+                _finish_schema_episode(
+                    ep_rec, info, terminated=bool(done), truncated=bool(trunc),
+                )
                 status = "WON 🎉" if ep_rec.won else ("TRUNCATED" if trunc else "DIED 💀")
                 print(f"\n[Episode {episode}] {status}  "
                       f"reward={ep_rec.total_reward:.1f}  "
@@ -1683,8 +1825,24 @@ def run(
 
                 tracker.new_episode()
                 episode += 1
+                _start_trajectory()
     finally:
+        current_episode = getattr(tracker, "_current", None)
+        if (
+            experiment_store is not None
+            and current_episode is not None
+            and current_episode.steps
+        ):
+            aborted = tracker.end_episode({"episode": {}})
+            _finish_schema_episode(
+                aborted, last_step_info, terminated=False,
+                truncated=False, manual_abort=True,
+            )
+        elif trajectory_writer is not None:
+            trajectory_writer.close()
         env.close()
+        if experiment_store is not None:
+            experiment_store.close()
         if alpha_streams:
             for alpha_stream in alpha_streams:
                 alpha_stream.stream.close()
@@ -2514,6 +2672,12 @@ def main() -> None:
         default=None,
         help="Optional identifier grouping this run with others for comparison/reporting",
     )
+    parser.add_argument("--log-schema", action="store_true",
+                        help="Persist human episodes to the structured SQLite experiment store")
+    parser.add_argument("--save-trajectories", action="store_true",
+                        help="Save per-step gzip JSONL sidecars and enable structured logging")
+    parser.add_argument("--schema-store", default="checkpoints/experiments.sqlite3",
+                        help="SQLite database for structured episode data")
     parser.add_argument(
         "--alphas",
         default="0.0, 0.1",
@@ -2602,6 +2766,8 @@ def main() -> None:
     args = parser.parse_args()
 
     is_survive_mode = str(args.objective).strip().lower() == "survive"
+    if is_survive_mode and (args.log_schema or args.save_trajectories):
+        parser.error("structured logging and trajectory sidecars currently support freeplay mode")
 
     if args.infinite:
         alphas = None
@@ -2665,6 +2831,8 @@ def main() -> None:
                 rare_pipe_seed=args.rare_pipe_seed,
                 rare_pipe_guarantee_window=max(1, args.rare_pipe_guarantee_window),
                 fps=args.fps,
+                schema_store_path=args.schema_store if args.log_schema or args.save_trajectories else None,
+                save_trajectories=args.save_trajectories,
             )
     else:
         if not args.map:
@@ -2688,7 +2856,11 @@ def main() -> None:
                 fps=args.fps,
             )
         else:
-            run(map_path=args.map, case_id=args.case_id, fps=args.fps)
+            run(
+                map_path=args.map, case_id=args.case_id, fps=args.fps,
+                schema_store_path=args.schema_store if args.log_schema or args.save_trajectories else None,
+                save_trajectories=args.save_trajectories,
+            )
 
 
 def _actions_to_idx(actions: dict) -> int:

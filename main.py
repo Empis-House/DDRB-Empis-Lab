@@ -397,6 +397,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--render-last", action="store_true", help="Render only last try of each batch")
     parser.add_argument("--checkpoint-path", default="", help="Checkpoint path for trainable agents")
     parser.add_argument("--report-file", default="", help="Optional JSON file to save run report")
+    parser.add_argument(
+        "--schema-store",
+        default="checkpoints/experiments.sqlite3",
+        help="SQLite database for structured episode data",
+    )
     parser.add_argument("--seed", type=int, default=None, help="Optional run seed for reproducibility")
     parser.add_argument(
         "--mode",
@@ -924,6 +929,8 @@ def main() -> None:
         registry=registry,
         execution_config=execution_config,
         benchmark_protocol=True,
+        schema_store_path=args.schema_store,
+        evaluation_stage="stage_2_cross_origin",
     )
     prefetch_executor.shutdown(wait=False, cancel_futures=True)
     _log(
@@ -963,6 +970,18 @@ def main() -> None:
         "runtime": runtime_metadata,
     }
     report = _format_agent_report(context=context, result=result)
+    from mario_rl_env.schema import SQLiteExperimentStore
+
+    with SQLiteExperimentStore(args.schema_store) as experiment_store:
+        stored_metrics = experiment_store.summarize_run(run_id)
+    if stored_metrics["episodes"]:
+        report["metrics"] = stored_metrics
+    report["structured_data"] = {
+        "sqlite_database": args.schema_store,
+        "run_id": run_id,
+        "episode_records": stored_metrics["episodes"],
+        "evaluation_stage": "stage_2_cross_origin",
+    }
     _print_agent_report(report)
 
     registry.record_run_complete(

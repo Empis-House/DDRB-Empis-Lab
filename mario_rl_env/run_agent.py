@@ -25,6 +25,7 @@ import argparse
 import sys
 import os
 import time
+import uuid
 from typing import Callable, Optional, Union
 
 import gymnasium as gym
@@ -298,14 +299,17 @@ def run(
     registry=None,
     execution_config=None,
     benchmark_protocol: bool = False,
+    schema_store_path: Optional[str] = None,
+    experiment_store=None,
+    evaluation_stage: Optional[str] = None,
 ) -> dict:
     """
     Run *n_episodes* of the specified agent and return summary stats.
 
     If `env` is provided, the runner will use the supplied environment directly.
-    If `env` is a callable, a fresh environment is created every `batch_size`
-    episodes for batched training. If `map_path` is a callable, it is used to
-    generate fresh Mario maps when no `env` is provided.
+    If `env` or `map_path` is callable, a fresh environment is created for
+    every episode. `batch_size` controls batched result grouping and cache/retry
+    sizing rather than reusing a level across multiple episodes.
 
     Returns
     -------
@@ -423,6 +427,16 @@ def run(
             f"Choose: random, right, right_jump, or one of {AGENT_MANAGER.list_agents()}"
         )
 
+    owns_experiment_store = False
+    if experiment_store is None and schema_store_path:
+        from mario_rl_env.schema import SQLiteExperimentStore
+
+        experiment_store = SQLiteExperimentStore(schema_store_path)
+        owns_experiment_store = True
+    resolved_evaluation_stage = evaluation_stage or (
+        "stage_2_cross_origin" if benchmark_protocol else "exploratory"
+    )
+
     if training_agent:
         checkpoint_manager = None
         history_manager = None
@@ -468,33 +482,71 @@ def run(
                 print(f"[Agent:{trace_tag}] History path: {history_path}")
             if checkpoint_path:
                 print(f"[Agent:{trace_tag}] Checkpoint path: {checkpoint_path}")
-        training_history = run_training_loop(
-            training_environment,
-            agent,
-            n_episodes=n_episodes,
-            max_steps=None,
-            render=render,
-            render_last=render_last,
-            verbose=verbose,
-            batch_size=batch_size,
-            history_path=history_path,
-            checkpoint_path=checkpoint_path,
-            debug=debug,
-            trace_tag=trace_tag,
-            registry=registry,
-            execution_config=execution_config,
-            checkpoint_manager=checkpoint_manager,
-            history_manager=history_manager,
-        )
+        try:
+            training_history = run_training_loop(
+                training_environment,
+                agent,
+                n_episodes=n_episodes,
+                max_steps=None,
+                render=render,
+                render_last=render_last,
+                verbose=verbose,
+                batch_size=batch_size,
+                history_path=history_path,
+                checkpoint_path=checkpoint_path,
+                debug=debug,
+                trace_tag=trace_tag,
+                registry=registry,
+                execution_config=execution_config,
+                checkpoint_manager=checkpoint_manager,
+                history_manager=history_manager,
+                experiment_store=experiment_store,
+                evaluation_stage=resolved_evaluation_stage,
+            )
+        finally:
+            if owns_experiment_store:
+                experiment_store.close()
         if hasattr(env, "close"):
             env.close()
         return {"trace_tag": trace_tag, "history": training_history}
 
     tracker = MetricsTracker(keep_steps=True)
     t_start = time.time()
+    schema_snapshot = None
+    schema_run_id = getattr(execution_config, "run_id", None) or str(uuid.uuid4())
+    store_total_steps = 0
+    if experiment_store is not None:
+        from mario_rl_env.schema.integration import (
+            backend_name, make_experiment_run, make_player_snapshot,
+        )
+
+        source_environment = backend_name(env)
+        schema_agent_id = f"{agent_name}:{getattr(execution_config, 'case_id', None) or 'default'}"
+        experiment_store.upsert_run(make_experiment_run(
+            run_id=schema_run_id,
+            case_id=getattr(execution_config, "case_id", None),
+            evaluation_stage=resolved_evaluation_stage,
+            training_env_backend=source_environment,
+            agent_init_seed=getattr(execution_config, "seed_used", None),
+            env_seed=getattr(execution_config, "seed_used", None),
+        ))
+        schema_snapshot = make_player_snapshot(
+            agent,
+            agent_name=agent_name,
+            agent_id=schema_agent_id,
+            source_environment=source_environment,
+            episodes_completed=0,
+            total_env_steps=0,
+            seed=getattr(execution_config, "seed_used", None),
+            trigger="initial",
+            parent_snapshot_id=None,
+        )
+        experiment_store.upsert_snapshot(schema_snapshot)
 
     for ep in range(n_episodes):
-        if ep > 0 and env_provider is not None and ep % batch_size == 0:
+        episode_started = time.perf_counter()
+        episode_steps_start = store_total_steps
+        if ep > 0 and env_provider is not None:
             if hasattr(env, "close"):
                 try:
                     env.close()
@@ -512,6 +564,7 @@ def run(
             action = agent.act(obs)
             obs, reward, done, trunc, info = env.step(action)
             tracker.record(action, reward, info)
+            store_total_steps += 1
 
             if render and (not render_last or ep == n_episodes):
                 try:
@@ -524,6 +577,36 @@ def run(
                     pass
 
         ep_rec = tracker.end_episode(info)
+        if experiment_store is not None and schema_snapshot is not None:
+            from mario_rl_env.schema.integration import record_episode
+
+            episode_info = info.get("episode", info) if isinstance(info, dict) else {}
+            record_episode(
+                experiment_store,
+                run_id=schema_run_id,
+                agent_name=agent_name,
+                evaluation_stage=resolved_evaluation_stage,
+                mode=getattr(execution_config, "mode", "inference"),
+                split_role={
+                    "training": "train", "validation": "val",
+                    "testing": "test", "inference": "test",
+                }.get(getattr(execution_config, "mode", "inference"), "test"),
+                snapshot=schema_snapshot,
+                env=env,
+                info=episode_info if isinstance(episode_info, dict) else {},
+                episode_index=ep,
+                total_env_steps_start=episode_steps_start,
+                total_env_steps_end=store_total_steps,
+                episodes_completed_end=ep + 1,
+                episode_seconds=time.perf_counter() - episode_started,
+                total_reward=ep_rec.total_reward,
+                steps=ep_rec.steps,
+                terminated=done,
+                truncated=trunc,
+                seed=(getattr(execution_config, "seed_used", 0) + ep)
+                if execution_config is not None else None,
+                batch_index=ep // batch_size,
+            )
 
         if verbose:
             status = "WIN" if ep_rec.won else "DEAD"
@@ -542,6 +625,8 @@ def run(
         tracker.save_replay(save_replay)
 
     summary = tracker.summary()
+    if owns_experiment_store:
+        experiment_store.close()
     if verbose:
         print()
         tracker.print_summary()
@@ -628,6 +713,8 @@ def main() -> None:
     parser.add_argument("--save-agent", default="",
                         metavar="FILE",
                         help="Save trained agent checkpoint to FILE. If FILE exists, resume training from it.")
+    parser.add_argument("--schema-store", default="checkpoints/experiments.sqlite3",
+                        help="SQLite database for structured episode data")
     parser.add_argument("--alpha", type=float, default=0.2,
                         help="Tabular Q learning rate alpha (default: 0.2)")
     parser.add_argument("--gamma", type=float, default=0.99,
@@ -694,6 +781,7 @@ def main() -> None:
         registry=registry,
         execution_config=execution_config,
         benchmark_protocol=args.benchmark_protocol,
+        schema_store_path=args.schema_store,
     )
 
     registry.record_run_complete(

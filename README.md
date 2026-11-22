@@ -118,7 +118,7 @@ Useful options:
 
 - `--agent`: agent name to run
 - `--episodes`: number of episodes
-- `--batch-size`: episodes to run before regenerating levels
+- `--batch-size`: number of levels requested/retried per cache batch; environments and levels are refreshed once per episode
 - `--render`: render every episode
 - `--render-last`: render only the last episode in each batch
 - `--checkpoint-path`: resume a trainable agent from disk
@@ -180,6 +180,36 @@ episodes, rewards, win/death rates, and progress. It also aggregates results
 by training environment and includes pairwise mean-reward, progress, and win-rate
 differences. Procedural training reports record hashes of generated levels;
 classic training reports record the stage used for each episode.
+
+Each benchmark command also writes validated episode records to
+`checkpoints/experiments.sqlite3` by default; override this with
+`--schema-store`. The root `main.py` runner writes its `--report-file` summary
+from those persisted records and keeps the existing JSON report format.
+
+### Structured experiment data
+
+`mario_rl_env.schema` defines Pydantic v2 models for experiment runs, agent
+snapshots, levels, per-episode performance, and trajectory-sidecar metadata.
+Training runs write an initial snapshot, periodic snapshots every 500 episodes,
+full checkpoint snapshots every 1,000 episodes, and a light cycle-end save
+point when a run ends between full checkpoints. Episode records remain at
+one-row-per-episode granularity in SQLite; trajectory steps are written
+separately as `.jsonl.gz`.
+
+The level representation stores integer tile IDs column-by-column. The
+repository's tilemap/API convention is rows top-to-bottom, so conversion
+methods explicitly translate between that convention and the representation's
+default bottom-to-top column order. Generate JSON Schema documents with:
+
+```python
+from mario_rl_env.schema import export_json_schemas
+
+export_json_schemas("schemas")
+```
+
+Human freeplay can opt in to SQLite logging and trajectory sidecars with
+`--log-schema` and `--save-trajectories`. Install `requirements-benchmark.txt`
+for the optional classic SMB backend and `rliable` evaluation metrics.
 
 Protocol conditions shared by the custom and NES-backed runs:
 

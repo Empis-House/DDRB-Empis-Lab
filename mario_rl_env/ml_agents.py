@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import abc
 import csv
+import hashlib
 import json
 import os
 import pickle
+import time
+import uuid
 import warnings
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 
 import gymnasium as gym
@@ -49,6 +53,37 @@ class RLAgent(abc.ABC):
     def reset(self) -> None:
         """Reset any episode-specific state."""
         return None
+
+    def get_snapshot_metadata(self) -> Dict[str, Any]:
+        """Return lightweight, serializable identity and training-state metadata."""
+        hyperparameter_names = (
+            "alpha", "gamma", "epsilon", "epsilon_decay", "min_epsilon",
+            "exploration_rate", "exploration_decay", "exploration_min",
+            "batch_size", "memory_size", "burnin", "learn_every", "sync_every",
+        )
+        return {
+            "is_trainable": isinstance(self, (TabularQAgent,)) or type(self).__name__ == "TorchDQNAgent",
+            "agent_family": (
+                "value_based_drl" if type(self).__name__ == "TorchDQNAgent"
+                else "tabular_rl" if hasattr(self, "q_table")
+                else "heuristic"
+            ),
+            "framework_backend": "pytorch" if type(self).__name__ == "TorchDQNAgent" else "pure_python",
+            "current_epsilon": getattr(self, "epsilon", getattr(self, "exploration_rate", None)),
+            "hyperparameters": {
+                name: getattr(self, name) for name in hyperparameter_names
+                if hasattr(self, name)
+            },
+            "replay_buffer_size": len(self.memory) if hasattr(self, "memory") else None,
+            "observation_contract": {
+                "obs_mode": "rgb" if type(self).__name__ == "TorchDQNAgent" else "features",
+                "shape": list(getattr(self, "state_dim", ())) or None,
+            },
+            "network_architecture": (
+                {"name": "MarioNet", "state_dim": list(self.state_dim)}
+                if type(self).__name__ == "TorchDQNAgent" else None
+            ),
+        }
 
     def save(self, path: str) -> None:
         """Serialize the agent to disk."""
@@ -572,6 +607,7 @@ class TorchDQNAgent(RLAgent):
             "model": self.net.state_dict(),
             "exploration_rate": self.exploration_rate,
             "curr_step": self.curr_step,
+            "ddrb_episodes_completed": getattr(self, "_ddrb_episodes_completed", 0),
             # Store init parameters for proper reconstruction
             "init_params": {
                 "action_size": self.action_size,
@@ -623,6 +659,7 @@ class TorchDQNAgent(RLAgent):
             agent.exploration_rate = float(checkpoint["exploration_rate"])
         if "curr_step" in checkpoint:
             agent.curr_step = int(checkpoint["curr_step"])
+        agent._ddrb_episodes_completed = int(checkpoint.get("ddrb_episodes_completed", 0))
         
         print(f"[Agent] Loaded DDQN checkpoint from {path} (step {agent.curr_step})")
         return agent
@@ -678,6 +715,9 @@ def run_training_loop(
     execution_config: Optional[ExecutionConfig] = None,
     checkpoint_manager: Optional[CheckpointManager] = None,
     history_manager: Optional[HistoryManager] = None,
+    experiment_store: Optional[Any] = None,
+    evaluation_stage: str = "exploratory",
+    split_role: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     results: List[Dict[str, Any]] = []
     history = TrainingHistory()
@@ -705,8 +745,44 @@ def run_training_loop(
     is_factory = callable(env)
     current_env = env() if is_factory else env
     episode_env = current_env
+    episode_offset = int(getattr(agent, "_ddrb_episodes_completed", 0))
+    total_env_steps = int(getattr(agent, "curr_step", 0))
+    active_snapshot = None
+    experiment_run_id = resolved_config.run_id or str(uuid.uuid4())
+    store_split_role = split_role or {
+        "training": "train", "validation": "val",
+        "testing": "test", "inference": "test",
+    }.get(resolved_config.mode, "train")
+    if experiment_store is not None:
+        from .schema.integration import backend_name, make_experiment_run, make_player_snapshot
+
+        source_environment = backend_name(episode_env)
+        store_agent_id = f"{resolved_config.agent_name or type(agent).__name__}:{resolved_config.case_id or 'default'}"
+        experiment_store.upsert_run(make_experiment_run(
+            run_id=experiment_run_id,
+            case_id=resolved_config.case_id,
+            evaluation_stage=evaluation_stage,
+            training_env_backend=source_environment,
+            agent_init_seed=resolved_config.seed_used,
+            env_seed=resolved_config.seed_used,
+        ))
+        previous = experiment_store.latest_snapshot(store_agent_id)
+        active_snapshot = make_player_snapshot(
+            agent,
+            agent_name=resolved_config.agent_name or type(agent).__name__,
+            agent_id=store_agent_id,
+            source_environment=source_environment,
+            episodes_completed=episode_offset,
+            total_env_steps=total_env_steps,
+            seed=resolved_config.seed_used,
+            trigger="initial",
+            parent_snapshot_id=previous.player_snapshot_id if previous else None,
+        )
+        experiment_store.upsert_snapshot(active_snapshot)
 
     for episode in range(1, n_episodes + 1):
+        episode_started = time.perf_counter()
+        episode_steps_start = total_env_steps
         if debug and episode % 50 == 0:
             # periodically print some stats about Q-table size
             try:
@@ -714,7 +790,7 @@ def run_training_loop(
                 print(f"[Debug] Episode {episode}: Q-table states={q_count}")
             except Exception:
                 pass
-        if episode > 1 and is_factory and (episode - 1) % batch_size == 0:
+        if episode > 1 and is_factory:
             if hasattr(episode_env, "close"):
                 try:
                     episode_env.close()
@@ -775,6 +851,7 @@ def run_training_loop(
 
             total_reward += float(reward)
             steps += 1
+            total_env_steps += 1
             obs = next_obs
 
             if max_steps is not None and steps >= max_steps:
@@ -792,6 +869,80 @@ def run_training_loop(
             episode_record["trace_tag"] = trace_tag
         results.append(episode_record)
         history.append(episode_record)
+        completed_episodes = episode_offset + episode
+        agent._ddrb_episodes_completed = completed_episodes
+        if experiment_store is not None and active_snapshot is not None:
+            from .schema.integration import make_player_snapshot, record_episode
+
+            info_dict = info if isinstance(info, dict) else {}
+            episode_info = info_dict.get("episode", info_dict)
+            record_episode(
+                experiment_store,
+                run_id=experiment_run_id,
+                agent_name=resolved_config.agent_name or type(agent).__name__,
+                evaluation_stage=evaluation_stage,
+                mode=resolved_config.mode,
+                split_role=store_split_role,
+                snapshot=active_snapshot,
+                env=episode_env,
+                info=episode_info if isinstance(episode_info, dict) else {},
+                episode_index=completed_episodes - 1,
+                total_env_steps_start=episode_steps_start,
+                total_env_steps_end=total_env_steps,
+                episodes_completed_end=completed_episodes,
+                episode_seconds=time.perf_counter() - episode_started,
+                total_reward=total_reward,
+                steps=steps,
+                terminated=done,
+                truncated=truncated,
+                seed=(resolved_config.seed_used + completed_episodes - 1)
+                if resolved_config.seed_used is not None else None,
+                batch_index=(completed_episodes - 1) // max(1, batch_size),
+            )
+
+        if experiment_store is not None and completed_episodes % 1000 == 0:
+            checkpoint_uri = ""
+            if checkpoint_path or checkpoint_manager is not None:
+                base_path = checkpoint_path or str(checkpoint_manager.checkpoint_path(
+                    resolved_config.agent_name or "unknown", resolved_config.case_id
+                ))
+                checkpoint_uri = f"{base_path}.episode_{completed_episodes}"
+                agent.save(checkpoint_uri)
+            checkpoint_hash = (
+                hashlib.sha256(Path(checkpoint_uri).read_bytes()).hexdigest()
+                if checkpoint_uri else None
+            )
+            active_snapshot = make_player_snapshot(
+                agent,
+                agent_name=resolved_config.agent_name or type(agent).__name__,
+                agent_id=store_agent_id,
+                source_environment=source_environment,
+                episodes_completed=completed_episodes,
+                total_env_steps=total_env_steps,
+                seed=resolved_config.seed_used,
+                trigger="checkpoint_1000_ep",
+                parent_snapshot_id=active_snapshot.player_snapshot_id,
+                checkpoint_uri=checkpoint_uri or None,
+                checkpoint_hash=checkpoint_hash,
+            )
+            experiment_store.upsert_snapshot(active_snapshot)
+        elif (
+            experiment_store is not None
+            and completed_episodes % 500 == 0
+            and episode < n_episodes
+        ):
+            active_snapshot = make_player_snapshot(
+                agent,
+                agent_name=resolved_config.agent_name or type(agent).__name__,
+                agent_id=store_agent_id,
+                source_environment=source_environment,
+                episodes_completed=completed_episodes,
+                total_env_steps=total_env_steps,
+                seed=resolved_config.seed_used,
+                trigger="periodic_500_ep",
+                parent_snapshot_id=active_snapshot.player_snapshot_id,
+            )
+            experiment_store.upsert_snapshot(active_snapshot)
 
         if history_path:
             history.save(history_path)
@@ -846,6 +997,35 @@ def run_training_loop(
             metrics={"episodes": n_episodes},
             config_hash=resolved_config.config_hash(),
         )
+
+    if experiment_store is not None and active_snapshot is not None:
+        last_completed = episode_offset + n_episodes
+        snapshot_is_current = active_snapshot.training_state.episodes_completed == last_completed
+        if not snapshot_is_current:
+            checkpoint_uri = checkpoint_path
+            if checkpoint_manager is not None:
+                checkpoint_uri = str(checkpoint_manager.checkpoint_path(
+                    resolved_config.agent_name or "unknown", resolved_config.case_id
+                ))
+            checkpoint_hash = (
+                hashlib.sha256(Path(checkpoint_uri).read_bytes()).hexdigest()
+                if checkpoint_uri and Path(checkpoint_uri).is_file() else None
+            )
+            active_snapshot = make_player_snapshot(
+                agent,
+                agent_name=resolved_config.agent_name or type(agent).__name__,
+                agent_id=store_agent_id,
+                source_environment=source_environment,
+                episodes_completed=last_completed,
+                total_env_steps=total_env_steps,
+                seed=resolved_config.seed_used,
+                trigger="light_cycle_end" if last_completed % 1000 else "final",
+                parent_snapshot_id=active_snapshot.player_snapshot_id,
+                checkpoint_uri=checkpoint_uri or None,
+                checkpoint_hash=checkpoint_hash,
+                light=bool(last_completed % 1000),
+            )
+            experiment_store.upsert_snapshot(active_snapshot)
 
     if history_path and history.records:
         if history_manager is not None:

@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 import itertools
+import hashlib
+import json
+import sys
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Literal, Optional
+
+_REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPOSITORY_ROOT))
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
@@ -13,7 +20,7 @@ from .Map_Grammars_Elite import Map_Elite
 from .request_queue import GenerationQueueRouter, GenerationRequestContract, QueueBackpressureError
 from .lineage import record_job as _record_lineage
 from .Data_Preprocessing import load_structures_df as _load_structures_df
-from .level_formats import tilemap_to_rows
+from .level_formats import rows_to_tilemap, tilemap_to_rows
 from .Performance_Evaluation import (
     Performance,
     Performance_KL_Progression,
@@ -46,6 +53,26 @@ _map_elite_registry: Dict[str, Map_Elite] = {}
 _instance_id_counter = itertools.count(1)
 _structures_df: Optional[pd.DataFrame] = None
 _GENERATION_QUEUE_ROUTER = GenerationQueueRouter()
+
+_CHAR_TO_TILE_ID = {
+    "-": 0, "o": 2, "X": 1, "S": 3, "B": 3, "b": 3,
+    "Q": 4, "?": 4, "E": 0,
+    "<": 12, ">": 13, "[": 14, "]": 15,
+    "r": 16, "R": 17, "u": 18, "U": 19,
+    "v": 20, "V": 21, "w": 22, "W": 23,
+}
+
+
+def _tile_token(value: Any) -> int:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return int(value)
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.lstrip("-").isdigit():
+            return int(stripped)
+        if stripped in _CHAR_TO_TILE_ID:
+            return _CHAR_TO_TILE_ID[stripped]
+    return 0
 
 
 class MapEliteCreateRequest(BaseModel):
@@ -164,6 +191,7 @@ class PoolManagerResponse(BaseModel):
     batch_size: int
     tilemap: Optional[List[List[Any]]] = None
     tilemaps: List[List[List[Any]]] = Field(default_factory=list)
+    level_metadata: List[Dict[str, Any]] = Field(default_factory=list)
     case_id: Optional[str] = None
     queue_key: Optional[str] = None
     pending: int = 0
@@ -207,6 +235,8 @@ class PerformancePredictResponse(BaseModel):
     agent_name: Optional[str] = None
     agent_id: Optional[str] = None
     used_model: bool
+    priori_conditions: Dict[str, Any] = Field(default_factory=dict)
+    ddrb_adjustment_action: Dict[str, Any] = Field(default_factory=lambda: {"strategy_type": "none"})
 
 
 def _resolve_agent_name(*names: Optional[str]) -> str:
@@ -245,6 +275,108 @@ def _serialize_tilemap(tilemap: Any) -> List[List[Any]]:
         return tilemap_to_rows(tilemap)
     except TypeError as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+def _playability_oracle(instance: Any, tilemap: Any):
+    token_lookup = getattr(instance, "_structure_to_token", None)
+    knowledge = getattr(instance, "Knowledge", None)
+    if not isinstance(token_lookup, dict) or knowledge is None:
+        return {}
+
+    rows = tilemap_to_rows(tilemap)
+    if not rows:
+        return {}
+    sequence: list[int] = []
+    for column in range(len(rows[0])):
+        structure = "".join(str(row[column]) for row in rows)
+        token = token_lookup.get(structure)
+        if token is None:
+            return {}
+        sequence.append(int(token))
+
+    from . import Word_Stitching
+
+    started = time.perf_counter()
+    solvable = bool(Word_Stitching.Jumping_Fiasible_Word(sequence, knowledge))
+    runtime_ms = (time.perf_counter() - started) * 1000.0
+    kernel_options = getattr(
+        Word_Stitching._jumping_feasible_kernel, "targetoptions", {},
+    )
+    device = "cpu"
+    if kernel_options.get("target_backend") == "cuda":
+        from numba import cuda
+
+        device = "cuda" if cuda.is_available() else "unknown"
+    return {
+        "oracle_name": "Jumping_Fiasible_Word",
+        "is_solvable": solvable,
+        "oracle_score": float(solvable),
+        "execution_device": device,
+        "runtime_ms": runtime_ms,
+        "oracle_version": "numba" if Word_Stitching.njit is not None else "python",
+    }
+
+
+def _level_metadata(
+    tilemaps: List[Any], instance_id: str, instance: Any = None,
+) -> List[Dict[str, Any]]:
+    levels = []
+    for tilemap in tilemaps:
+        rows = tilemap_to_rows(tilemap)
+        if not rows:
+            rows = rows_to_tilemap(tilemap) if isinstance(tilemap, list) else []
+        if not rows:
+            raise ValueError("tilemap must be a non-empty two-dimensional sequence")
+
+        height = len(rows)
+        width = len(rows[0])
+        if width == 0 or any(len(row) != width for row in rows):
+            raise ValueError("tilemap rows must have the same non-zero width")
+
+        tokens: list[int] = []
+        for column in range(width):
+            column_values = [_tile_token(rows[row][column]) for row in range(height)]
+            column_values.reverse()
+            tokens.extend(column_values)
+
+        identity = {
+            "alphabet_id": "mario_rl_tiletype_v1",
+            "height": height,
+            "width": width,
+            "column_tokens": tokens,
+        }
+        level_id = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        level = {
+            "level_id": level_id,
+            "representation": {
+                "format": "flattened_column_tokens",
+                "width": width,
+                "height": height,
+                "column_tokens": tokens,
+                "alphabet_id": "mario_rl_tiletype_v1",
+                "column_order": "bottom_to_top",
+            },
+            "classic_stage_ref": None,
+            "origin": {
+                "source_type": "pcg_qd_map_elites",
+                "instance_id": instance_id,
+                "generator_name": None,
+                "generation_seed": None,
+                "parent_level_ids": [],
+                "generation_params": {},
+            },
+            "diversity_qd_metrics": {},
+            "performance_evaluation_metrics": {},
+            "era_topology_metrics": {},
+            "playability_oracle": {},
+            "ddrb_economy_challenge": {},
+        }
+        if instance is not None:
+            level["playability_oracle"] = _playability_oracle(instance, tilemap)
+        levels.append(level)
+    return levels
 
 
 def _as_mapping_dict(model: BaseModel) -> Dict[str, Any]:
@@ -507,6 +639,7 @@ def pool_manager(instance_id: str, payload: PoolManagerRequest) -> PoolManagerRe
         serialized_tilemaps = [_serialize_tilemap(tilemap) for tilemap in tilemaps]
         return {
             "tilemaps": serialized_tilemaps,
+            "level_metadata": _level_metadata(tilemaps, instance_id, instance),
             "pending": int(queue_state.get("pending", 0)),
             "max_pending": int(queue_state.get("max_pending", payload.max_pending)),
             "dead_letter_count": int(queue_state.get("dead_letter_count", 0)),
@@ -537,6 +670,7 @@ def pool_manager(instance_id: str, payload: PoolManagerRequest) -> PoolManagerRe
         batch_size=batch_size,
         tilemap=serialized_tilemaps[0] if serialized_tilemaps else None,
         tilemaps=serialized_tilemaps,
+        level_metadata=result.get("level_metadata", []),
         case_id=payload.case_id,
         queue_key=queue_key,
         pending=int(result.get("pending", 0)),
@@ -635,6 +769,7 @@ def submit_pool_manager_job(instance_id: str, payload: PoolManagerRequest) -> Jo
             "batch_size": batch_size,
             "tilemap": serialized_tilemaps[0] if serialized_tilemaps else None,
             "tilemaps": serialized_tilemaps,
+            "level_metadata": _level_metadata(tilemaps, instance_id, instance),
             "case_id": payload.case_id,
             "queue_key": queue_key,
             "pending": int(queue_state.get("pending", 0)),
@@ -744,5 +879,14 @@ def performance_predict(payload: PerformancePredictRequest) -> PerformancePredic
         agent_name=agent_name,
         agent_id=agent_name,
         used_model=bool(status.get("model_ready") and status.get("has_agent_history")),
+        priori_conditions={
+            "predicted_score": float(score),
+            "predicted_win_prob": None,
+            "predictor_model_version": str(status.get("model_version") or "unknown"),
+        },
+        ddrb_adjustment_action={
+            "strategy_type": "none",
+            "notes": "prediction endpoint does not select a DDRB adjustment",
+        },
     )
 

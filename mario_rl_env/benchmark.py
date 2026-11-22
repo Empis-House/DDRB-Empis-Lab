@@ -8,6 +8,7 @@ import os
 import platform
 import statistics
 import time
+import uuid
 from itertools import combinations, count
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -87,8 +88,43 @@ def _evaluate_checkpoint(
     episodes: int,
     seed: int,
     render: bool,
+    agent_name: str,
+    experiment_store=None,
 ) -> dict:
+    from .schema.integration import (
+        make_experiment_run, make_player_snapshot, record_episode,
+    )
+
     agent = _load_dqn_checkpoint(checkpoint_path)
+    run_id = f"evaluation-{agent_name}-{uuid.uuid4()}"
+    evaluation_stage = (
+        "stage_1_classic_baseline"
+        if training_environment == "gym-super-mario-bros"
+        else "stage_2_cross_origin"
+    )
+    active_snapshot = None
+    total_env_steps = 0
+    if experiment_store is not None:
+        experiment_store.upsert_run(make_experiment_run(
+            run_id=run_id,
+            case_id=None,
+            evaluation_stage=evaluation_stage,
+            training_env_backend=training_environment,
+            agent_init_seed=seed,
+            env_seed=seed,
+        ))
+        active_snapshot = make_player_snapshot(
+            agent,
+            agent_name=agent_name,
+            agent_id=f"{agent_name}:{training_environment}",
+            source_environment=training_environment,
+            episodes_completed=0,
+            total_env_steps=int(getattr(agent, "curr_step", 0)),
+            seed=seed,
+            trigger="initial",
+            parent_snapshot_id=None,
+        )
+        experiment_store.upsert_snapshot(active_snapshot)
     per_stage = {}
     all_records = []
 
@@ -101,7 +137,9 @@ def _evaluate_checkpoint(
         stage_records = []
         try:
             for episode in range(episodes):
-                observation, _ = env.reset()
+                episode_started = time.perf_counter()
+                env_seed = seed + stage_index * episodes + episode
+                observation, _ = env.reset(seed=env_seed)
                 terminated = truncated = False
                 total_reward = 0.0
                 info = {}
@@ -125,6 +163,30 @@ def _evaluate_checkpoint(
                 }
                 stage_records.append(record)
                 all_records.append(record)
+                if experiment_store is not None and active_snapshot is not None:
+                    record_episode(
+                        experiment_store,
+                        run_id=run_id,
+                        agent_name=agent_name,
+                        evaluation_stage=evaluation_stage,
+                        mode="testing",
+                        split_role="test",
+                        snapshot=active_snapshot,
+                        env=env,
+                        info=info.get("episode", info),
+                        episode_index=total_env_steps,
+                        total_env_steps_start=total_env_steps,
+                        total_env_steps_end=total_env_steps + steps,
+                        episodes_completed_end=len(all_records),
+                        episode_seconds=time.perf_counter() - episode_started,
+                        total_reward=total_reward,
+                        steps=steps,
+                        terminated=terminated,
+                        truncated=truncated,
+                        seed=env_seed,
+                        batch_index=stage_index,
+                    )
+                total_env_steps += steps
         finally:
             env.close()
         per_stage[stage] = {
@@ -148,6 +210,7 @@ def compare_checkpoints(
     episodes: int = 5,
     seed: int = 0,
     render: bool = False,
+    experiment_store=None,
 ) -> dict:
     if set(models) != set(training_environments):
         missing_training = sorted(set(models) - set(training_environments))
@@ -169,6 +232,8 @@ def compare_checkpoints(
             episodes=episodes,
             seed=seed,
             render=render,
+            agent_name=label,
+            experiment_store=experiment_store,
         )
         for label, path in models.items()
     }
@@ -202,7 +267,7 @@ def compare_checkpoints(
                 - environment_summaries[left]["win_rate"]
             ),
         })
-    return {
+    report = {
         "schema_version": 1,
         "kind": "classic_level_cross_environment_comparison",
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
@@ -224,6 +289,15 @@ def compare_checkpoints(
             "This comparison supports pixel-based DQN checkpoints with the shared eight-action output layer.",
         ],
     }
+    if experiment_store is not None:
+        from .schema import two_stage_evaluation_report
+
+        report["two_stage_evaluation"] = two_stage_evaluation_report(
+            experiment_store,
+            metric="progress_ratio",
+            split_role="test",
+        )
+    return report
 
 
 def _write_json(path: str, payload: dict) -> None:
@@ -282,19 +356,24 @@ def _train_classic(args: argparse.Namespace) -> None:
             "benchmark_protocol": PROTOCOL_METADATA,
         },
     )
-    history = run_training_loop(
-        environment_factory,
-        agent,
-        n_episodes=args.episodes,
-        batch_size=args.batch_size,
-        render=args.render,
-        verbose=True,
-        history_path=args.history,
-        checkpoint_path=args.checkpoint,
-        trace_tag=run_id,
-        registry=registry,
-        execution_config=execution_config,
-    )
+    from .schema import SQLiteExperimentStore
+
+    with SQLiteExperimentStore(args.schema_store) as experiment_store:
+        history = run_training_loop(
+            environment_factory,
+            agent,
+            n_episodes=args.episodes,
+            batch_size=args.batch_size,
+            render=args.render,
+            verbose=True,
+            history_path=args.history,
+            checkpoint_path=args.checkpoint,
+            trace_tag=run_id,
+            registry=registry,
+            execution_config=execution_config,
+            experiment_store=experiment_store,
+            evaluation_stage="stage_1_classic_baseline",
+        )
     payload = {
         "schema_version": 1,
         "kind": "classic_level_training",
@@ -351,6 +430,7 @@ def _build_parser() -> argparse.ArgumentParser:
     train.add_argument("--checkpoint", required=True)
     train.add_argument("--history", default="")
     train.add_argument("--report", default="benchmark/classic_training.json")
+    train.add_argument("--schema-store", default="checkpoints/experiments.sqlite3")
     train.add_argument("--render", action="store_true")
 
     compare = commands.add_parser("compare", help="Evaluate models from different training environments on classic stages")
@@ -372,6 +452,7 @@ def _build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--episodes", type=int, default=5)
     compare.add_argument("--seed", type=int, default=0)
     compare.add_argument("--report", default="benchmark/classic_comparison.json")
+    compare.add_argument("--schema-store", default="checkpoints/experiments.sqlite3")
     compare.add_argument("--render", action="store_true")
     return parser
 
@@ -384,14 +465,18 @@ def main() -> None:
 
     models = _pairs(args.model, "--model")
     training_environments = _pairs(args.training_env, "--training-env")
-    report = compare_checkpoints(
-        models=models,
-        training_environments=training_environments,
-        stages=tuple(args.stages),
-        episodes=args.episodes,
-        seed=args.seed,
-        render=args.render,
-    )
+    from .schema import SQLiteExperimentStore
+
+    with SQLiteExperimentStore(args.schema_store) as experiment_store:
+        report = compare_checkpoints(
+            models=models,
+            training_environments=training_environments,
+            stages=tuple(args.stages),
+            episodes=args.episodes,
+            seed=args.seed,
+            render=args.render,
+            experiment_store=experiment_store,
+        )
     _write_json(args.report, report)
     print(f"Saved classic-level comparison to {args.report}")
 
