@@ -47,6 +47,8 @@ python -m pip install -r requirements.txt
 
 ## Main workflows
 
+For the complete copy-pasteable experiment matrix, see [docs/EXPERIMENTS.md](./docs/EXPERIMENTS.md).
+
 ### 1. Start the world-generation API
 
 The root `main.py` workflow expects the API to be running on `http://127.0.0.1:8000`.
@@ -132,18 +134,17 @@ Useful options:
 ### 2a. Compare procedural and classic-level training
 
 The procedural `main.py` workflow uses a shared benchmark protocol for its
-custom-simulator training runs. To train a comparison model on classic SMB
-stages, install the optional backend in a **Python 3.13+** environment:
+custom-simulator training runs. Install the optional classic-SMB backend with
+Python 3.13:
 
 ```bash
 python -m pip install -r requirements.txt
 python -m pip install -r requirements-benchmark.txt
 ```
 
-The optional `gym-super-mario-bros` backend depends on `nes-py`; its current
-release requires Python 3.13 or newer. The existing Python 3.12 environment
-cannot install that release. Follow the upstream installation and ROM notices;
-the project does not distribute or license Nintendo ROMs.
+The optional `gym-super-mario-bros` backend depends on `nes-py`. Follow the
+upstream installation and ROM notices; the project does not distribute or
+license Nintendo ROMs.
 
 Train the procedural baseline using the existing API workflow:
 
