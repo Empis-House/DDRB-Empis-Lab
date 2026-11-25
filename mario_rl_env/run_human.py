@@ -28,6 +28,7 @@ import sys
 import os
 import json
 import random
+import threading
 import time
 import uuid
 from collections import deque
@@ -35,6 +36,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -1009,7 +1014,7 @@ def _schedule_alpha_refills(
     watch = {current_idx, max(0, current_idx - 1), min(len(alpha_streams) - 1, current_idx + 1)}
     for idx in watch:
         stream = alpha_streams[idx].stream
-        if stream.size() < max(2, prefetch_levels // 2):
+        if hasattr(stream, "refill") and stream.size() < max(2, prefetch_levels // 2):
             stream.refill(min_size=prefetch_levels)
 
 
@@ -1446,6 +1451,13 @@ def run(
         "miss": {"red": 0, "blue": 0},
     }
 
+    env = MarioEnv(
+        map_path=(map_path if map_path is not None else None),
+        obs_mode="rgb",
+        render_mode="human",
+        fps=fps,
+    )
+
     # Validate infinite mode requirements
     if infinite_mode:
         normalized_alphas = (
@@ -1479,53 +1491,56 @@ def run(
             print(f"✗ Failed to reach API: {e}")
             sys.exit(1)
 
-        # Build one stream per alpha to route red/blue pipes by difficulty direction.
-        try:
-            if instance_id:
-                print("Using provided instance-id with alpha-indexed client streams")
-                alpha_streams = _build_streams_for_provided_instance(
-                    api_client=api_client,
-                    instance_id=instance_id,
-                    agent_name=resolved_agent_name,
-                    request_payload=pool_request_payload,
-                    alpha_schedule=normalized_alphas,
-                    prefetch_levels=prefetch_levels,
-                    alpha_window_size=alpha_window_size,
+        print("Creating alpha-mapped instances...")
+
+        def bootstrap_alpha_streams() -> None:
+            nonlocal alpha_streams
+            try:
+                if instance_id:
+                    alpha_streams = _build_streams_for_provided_instance(
+                        api_client=api_client,
+                        instance_id=instance_id,
+                        agent_name=resolved_agent_name,
+                        request_payload=pool_request_payload,
+                        alpha_schedule=normalized_alphas,
+                        prefetch_levels=prefetch_levels,
+                        alpha_window_size=alpha_window_size,
+                    )
+                else:
+                    alpha_streams = _build_alpha_streams(
+                        api_client=api_client,
+                        agent_name=resolved_agent_name,
+                        base_request_payload=pool_request_payload,
+                        alpha_schedule=normalized_alphas,
+                        prefetch_levels=prefetch_levels,
+                        alpha_window_size=alpha_window_size,
+                    )
+                current_alpha_idx = 0
+                _prime_lane_state(
+                    alpha_streams[current_alpha_idx],
+                    rare_pipe_replace_rate=rare_pipe_replace_rate,
+                    rare_pipe_blue_share=rare_pipe_blue_share,
+                    rare_pipe_rng=rare_pipe_rng,
+                    rare_pipe_state=rare_pipe_state,
+                    rare_pipe_guarantee_window=rare_pipe_guarantee_window,
                 )
-            else:
-                print("Creating alpha-mapped instances...")
-                alpha_streams = _build_alpha_streams(
-                    api_client=api_client,
-                    agent_name=resolved_agent_name,
-                    base_request_payload=pool_request_payload,
-                    alpha_schedule=normalized_alphas,
-                    prefetch_levels=prefetch_levels,
-                    alpha_window_size=alpha_window_size,
+                print(
+                    f"✓ Alpha streams ready ({len(alpha_streams)} streams), "
+                    f"starting alpha={alpha_streams[current_alpha_idx].alpha:.2f}"
                 )
-            current_alpha_idx = 0
-            _prime_lane_state(
-                alpha_streams[current_alpha_idx],
-                rare_pipe_replace_rate=rare_pipe_replace_rate,
-                rare_pipe_blue_share=rare_pipe_blue_share,
-                rare_pipe_rng=rare_pipe_rng,
-                rare_pipe_state=rare_pipe_state,
-                rare_pipe_guarantee_window=rare_pipe_guarantee_window,
-            )
-            current_map = alpha_streams[current_alpha_idx].game_state.tilemap_source.clone()
-            print(
-                f"✓ Alpha streams ready ({len(alpha_streams)} streams), "
-                f"starting alpha={alpha_streams[current_alpha_idx].alpha:.2f}"
-            )
-        except RuntimeError as e:
-            print(f"✗ Failed to fetch level: {e}")
-            sys.exit(1)
+            except RuntimeError as e:
+                print(f"✗ Failed to fetch level: {e}")
+
+        threading.Thread(
+            target=bootstrap_alpha_streams,
+            name="worldgen-human-bootstrap",
+            daemon=True,
+        ).start()
     else:
         if map_path is None:
             raise ValueError("map_path is required when not in infinite mode")
         current_map = map_path
 
-    env = MarioEnv(map_path=current_map, obs_mode="rgb",
-                   render_mode="human", fps=fps)
     if infinite_mode and alpha_streams:
         _load_lane_into_env(env, alpha_streams[current_alpha_idx])
     tracker = MetricsTracker(keep_steps=True)
@@ -1711,14 +1726,21 @@ def run(
                         _start_trajectory()
                         print(f"\n[Episode {episode}] Restarted")
 
-            keys = pygame.key.get_pressed()
-            actions = {
-                'right': keys[pygame.K_RIGHT] or keys[pygame.K_d],
-                'left':  keys[pygame.K_LEFT]  or keys[pygame.K_a],
-                'down':  keys[pygame.K_DOWN]  or keys[pygame.K_s],
-                'jump':  keys[pygame.K_z]     or keys[pygame.K_SPACE],
-                'run':   keys[pygame.K_x]     or keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT],
-            }
+            if hasattr(pygame, "key"):
+                keys = pygame.key.get_pressed()
+            else:
+                keys = None
+            actions = (
+                {
+                    'right': keys[pygame.K_RIGHT] or keys[pygame.K_d],
+                    'left':  keys[pygame.K_LEFT]  or keys[pygame.K_a],
+                    'down':  keys[pygame.K_DOWN]  or keys[pygame.K_s],
+                    'jump':  keys[pygame.K_z]     or keys[pygame.K_SPACE],
+                    'run':   keys[pygame.K_x]     or keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT],
+                }
+                if keys is not None
+                else {"right": False, "left": False, "down": False, "jump": False, "run": False}
+            )
 
             action_idx = _actions_to_idx(actions)
 
@@ -1773,8 +1795,14 @@ def run(
                         current_idx=current_alpha_idx,
                         prefetch_levels=prefetch_levels,
                     )
-                mario_col = int(env._gs.mario.cx // TILE_SIZE)
-                remaining_tiles = env._gs.tilemap.width - mario_col
+                mario = getattr(getattr(env, "_gs", None), "mario", None)
+                tilemap = getattr(getattr(env, "_gs", None), "tilemap", None)
+                mario_col = int(getattr(mario, "cx", 0) // TILE_SIZE)
+                remaining_tiles = (
+                    int(getattr(tilemap, "width", 0)) - mario_col
+                    if tilemap is not None
+                    else append_trigger_tiles + 1
+                )
                 if remaining_tiles <= max(4, append_trigger_tiles):
                     try:
                         if not alpha_streams:
@@ -1851,7 +1879,10 @@ def run(
     if infinite_mode:
         print(f"Appended chunks: {levels_completed}   Added tiles: {tiles_appended}")
     tracker.print_summary()
-    save = input("Save replay? [y/N] ").strip().lower()
+    try:
+        save = input("Save replay? [y/N] ").strip().lower()
+    except (EOFError, OSError):
+        save = ""
     if save == "y":
         tracker.save_csv("metrics_human.csv")
         tracker.save_replay("replay_human_last.json")
@@ -1948,6 +1979,13 @@ def run_survival_time_trial(
         "miss": {"red": 0, "blue": 0},
     }
 
+    # Open the window and reset the renderer before world-generation bootstrap.
+    # This guarantees survival/freeplay UI startup is independent of API latency.
+    env: Optional[MarioEnv] = None
+    if infinite_mode:
+        env = MarioEnv(map_path=None, obs_mode="rgb", render_mode="human", fps=fps)
+        env.reset()
+
     if infinite_mode:
         normalized_alphas = (
             _full_interval_alpha_schedule(pipe_alpha_step)
@@ -2010,13 +2048,14 @@ def run_survival_time_trial(
             current_map = alpha_streams[current_alpha_idx].game_state.tilemap_source.clone()
         except RuntimeError as e:
             print(f"Failed to fetch initial level: {e}")
-            sys.exit(1)
+            return
     else:
         if map_path is None:
             raise ValueError("map_path is required when not in infinite mode")
         current_map = map_path
 
-    env = MarioEnv(map_path=current_map, obs_mode="rgb", render_mode="human", fps=fps)
+    if env is None:
+        env = MarioEnv(map_path=current_map, obs_mode="rgb", render_mode="human", fps=fps)
     if infinite_mode and alpha_streams:
         _load_lane_into_env(env, alpha_streams[current_alpha_idx])
     tracker = MetricsTracker(keep_steps=True)
@@ -2180,14 +2219,21 @@ def run_survival_time_trial(
             if not running:
                 break
 
-            keys = pygame.key.get_pressed()
-            actions = {
-                "right": keys[pygame.K_RIGHT] or keys[pygame.K_d],
-                "left": keys[pygame.K_LEFT] or keys[pygame.K_a],
-                "down": keys[pygame.K_DOWN] or keys[pygame.K_s],
-                "jump": keys[pygame.K_z] or keys[pygame.K_SPACE],
-                "run": keys[pygame.K_x] or keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT],
-            }
+            if hasattr(pygame, "key"):
+                keys = pygame.key.get_pressed()
+            else:
+                keys = None
+            actions = (
+                {
+                    "right": keys[pygame.K_RIGHT] or keys[pygame.K_d],
+                    "left": keys[pygame.K_LEFT] or keys[pygame.K_a],
+                    "down": keys[pygame.K_DOWN] or keys[pygame.K_s],
+                    "jump": keys[pygame.K_z] or keys[pygame.K_SPACE],
+                    "run": keys[pygame.K_x] or keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT],
+                }
+                if keys is not None
+                else {"right": False, "left": False, "down": False, "jump": False, "run": False}
+            )
 
             action_idx = _actions_to_idx(actions)
             obs, reward, done, trunc, info = env.step_with_actions(actions)

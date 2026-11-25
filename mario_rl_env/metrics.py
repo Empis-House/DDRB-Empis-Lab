@@ -209,7 +209,7 @@ class MetricsTracker:
             writer = csv.DictWriter(fh, fieldnames=rows[0].keys())
             writer.writeheader()
             writer.writerows(rows)
-        print(f"[MetricsTracker] Saved {len(rows)} episode(s) → {path}")
+        print(f"[MetricsTracker] Saved {len(rows)} episode(s) to {path}")
 
     def save_replay(self, path: str, episode_idx: int = -1) -> None:
         """
@@ -237,7 +237,7 @@ class MetricsTracker:
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("w") as fh:
             json.dump(data, fh, indent=2)
-        print(f"[MetricsTracker] Replay saved → {path}")
+        print(f"[MetricsTracker] Replay saved to {path}")
 
     def load_replay(self, path: str) -> dict:
         """Load a replay JSON file for offline inspection."""

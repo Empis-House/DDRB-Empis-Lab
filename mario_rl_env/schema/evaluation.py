@@ -163,7 +163,11 @@ def compute_rliable_metrics(
         maximum = max(float(np.max(value)) for value in score_dict.values())
         score_range = (0.0, 1.0) if minimum >= 0.0 and maximum <= 1.0 else (minimum, maximum)
     if not np.isfinite(score_range).all() or score_range[0] >= score_range[1]:
-        raise ValueError("score_range must contain finite values with minimum < maximum")
+        constant = float(score_range[0])
+        score_range = (0.0, 1.0) if 0.0 <= constant <= 1.0 else (
+            constant - 1.0,
+            constant + 1.0,
+        )
 
     thresholds = np.linspace(score_range[0], score_range[1], 51)
 

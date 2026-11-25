@@ -725,9 +725,9 @@ class Map_Elite:
 
     def __schedule_difficulty_refill(self, difficulty, request, target):
         with self.__difficulty_refill_state_lock:
-            if difficulty in self.__difficulty_refills:
-                return
-            self.__difficulty_refills.add(difficulty)
+            # Multiple low-pool transitions can legitimately need separate
+            # top-ups.  Starting the guarded worker here keeps gameplay
+            # non-blocking while __run_difficulty_refill prevents oversupply.
             worker = threading.Thread(
                 target=self.__run_difficulty_refill,
                 args=(difficulty, request, target),

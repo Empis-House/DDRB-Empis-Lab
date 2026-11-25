@@ -12,3 +12,7 @@ torchvision
 tensordict
 torchrl
 pillow
+#benchmarking
+gym-super-mario-bros==9.1.0
+rliable
+pandas<3.0

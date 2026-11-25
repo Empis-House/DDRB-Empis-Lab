@@ -24,8 +24,10 @@ from __future__ import annotations
 import argparse
 import sys
 import os
+import json
 import time
 import uuid
+from pathlib import Path
 from typing import Callable, Optional, Union
 
 import gymnasium as gym
@@ -623,6 +625,27 @@ def run(
         tracker.save_csv(save_csv)
     if save_replay:
         tracker.save_replay(save_replay)
+    if history_path:
+        history_output = Path(history_path)
+        history_output.parent.mkdir(parents=True, exist_ok=True)
+        if history_output.suffix.lower() == ".csv":
+            tracker.save_csv(str(history_output))
+        else:
+            rows = [
+                {
+                    "episode_id": episode.episode_id,
+                    "total_reward": episode.total_reward,
+                    "steps": episode.steps,
+                    "coins": episode.coins,
+                    "score": episode.score,
+                    "kills": episode.kills,
+                    "max_x": episode.max_x,
+                    "won": episode.won,
+                    "duration_sec": episode.duration_sec,
+                }
+                for episode in tracker._episodes
+            ]
+            history_output.write_text(json.dumps(rows, indent=2), encoding="utf-8")
 
     summary = tracker.summary()
     if owns_experiment_store:

@@ -9,6 +9,7 @@ import platform
 import statistics
 import time
 import uuid
+import numpy as np
 from itertools import combinations, count
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -36,6 +37,11 @@ def _pairs(values: Iterable[str], argument: str) -> Dict[str, str]:
 
 
 def _load_dqn_checkpoint(path: str):
+    if str(path).strip().lower() in {"random", "random-floor", "random_floor"}:
+        class RandomFloorAgent:
+            def act(self, _observation):
+                return int(np.random.randint(len(ACTION_MEANINGS)))
+        return RandomFloorAgent()
     from .ml_agents import TORCH_AVAILABLE, TorchDQNAgent
 
     if not TORCH_AVAILABLE:
@@ -85,6 +91,7 @@ def _evaluate_checkpoint(
     checkpoint_path: str,
     training_environment: str,
     stages: Tuple[str, ...],
+    procedural_levels: Tuple[str, ...] = (),
     episodes: int,
     seed: int,
     render: bool,
@@ -194,6 +201,51 @@ def _evaluate_checkpoint(
             "episodes": stage_records,
         }
 
+    for level_index, level_path in enumerate(procedural_levels):
+        from .benchmark_protocol import make_custom_env
+
+        level = str(level_path)
+        env = make_custom_env(
+            level,
+            render_mode="human" if render else None,
+            seed=seed + level_index * episodes,
+            obs_mode="rgb",
+        )
+        level_records = []
+        try:
+            for episode in range(episodes):
+                env_seed = seed + level_index * episodes + episode
+                observation, _ = env.reset(seed=env_seed)
+                terminated = truncated = False
+                total_reward = 0.0
+                info = {}
+                steps = 0
+                while not (terminated or truncated):
+                    action = agent.act(observation)
+                    observation, reward, terminated, truncated, info = env.step(action)
+                    total_reward += reward
+                    steps += 1
+                episode_info = info["episode"]
+                record = {
+                    "stage": f"procedural:{Path(level).stem}",
+                    "episode": episode + 1,
+                    "total_reward": float(total_reward),
+                    "steps": steps,
+                    "max_progress_tiles": float(episode_info["max_progress_tiles"]),
+                    "won": bool(episode_info["won"]),
+                    "died": bool(episode_info["died"]),
+                    "termination_reason": episode_info["termination_reason"],
+                    "coins": int(episode_info["coins"]),
+                }
+                level_records.append(record)
+                all_records.append(record)
+        finally:
+            env.close()
+        per_stage[f"procedural:{Path(level).stem}"] = {
+            "metrics": _summarize(level_records),
+            "episodes": level_records,
+        }
+
     return {
         "training_environment": training_environment,
         "checkpoint": str(Path(checkpoint_path).resolve()),
@@ -207,6 +259,7 @@ def compare_checkpoints(
     models: Dict[str, str],
     training_environments: Dict[str, str],
     stages: Tuple[str, ...] = DEFAULT_STAGES,
+    procedural_levels: Tuple[str, ...] = (),
     episodes: int = 5,
     seed: int = 0,
     render: bool = False,
@@ -229,6 +282,7 @@ def compare_checkpoints(
             checkpoint_path=path,
             training_environment=training_environments[label],
             stages=stages,
+            procedural_levels=procedural_levels,
             episodes=episodes,
             seed=seed,
             render=render,
@@ -274,7 +328,7 @@ def compare_checkpoints(
         "protocol": PROTOCOL_METADATA,
         "runtime": _runtime_metadata(),
         "evaluation": {
-            "levels": list(stages),
+            "levels": [*list(stages), *(f"procedural:{Path(path).stem}" for path in procedural_levels)],
             "episodes_per_level": episodes,
             "seed": seed,
             "paired_seeds_across_models": True,
@@ -289,6 +343,26 @@ def compare_checkpoints(
             "This comparison supports pixel-based DQN checkpoints with the shared eight-action output layer.",
         ],
     }
+    try:
+        rliable_scores = {}
+        for label, model_result in results.items():
+            values = [
+                float(row["total_reward"])
+                for stage_result in model_result["stages"].values()
+                for row in stage_result["episodes"]
+            ]
+            rliable_scores[label] = np.asarray([values], dtype=np.float64)
+        if rliable_scores:
+            from .schema import compute_rliable_metrics
+            report["rliable"] = compute_rliable_metrics(
+                rliable_scores,
+                num_bootstrap=200,
+            )
+    except ImportError:
+        report["rliable"] = {
+            "status": "unavailable",
+            "reason": "install requirements-benchmark.txt",
+        }
     if experiment_store is not None:
         from .schema import two_stage_evaluation_report
 
@@ -449,6 +523,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Training environment for each model label, e.g. procedural_custom_simulator",
     )
     compare.add_argument("--stages", nargs="+", default=list(DEFAULT_STAGES))
+    compare.add_argument(
+        "--procedural-level-set",
+        "--procedural-levels",
+        "--ood-level-set",
+        nargs="+",
+        default=[],
+        metavar="LEVEL",
+        help="Procedural/OOD .txt level files to evaluate after classic stages",
+    )
     compare.add_argument("--episodes", type=int, default=5)
     compare.add_argument("--seed", type=int, default=0)
     compare.add_argument("--report", default="benchmark/classic_comparison.json")
@@ -472,6 +555,7 @@ def main() -> None:
             models=models,
             training_environments=training_environments,
             stages=tuple(args.stages),
+            procedural_levels=tuple(args.procedural_level_set),
             episodes=args.episodes,
             seed=args.seed,
             render=args.render,
